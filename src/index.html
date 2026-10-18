@@ -9,7 +9,7 @@ input,textarea,button{font:inherit}input,textarea{display:block;border:1px solid
 button{background:#2365cc;color:white;border:none;border-radius:8px;padding:10px 14px;cursor:pointer}
 button.secondary{background:#e9eff9;color:#233b5d}button:disabled{opacity:.55}button+button{margin-left:6px}
 h2{font-size:17px;margin:0 0 16px}.note{font-size:12px;color:#62748f;line-height:1.5}
-.doc{width:100%;background:#eef4fd;text-align:left;color:#1c3558;margin:0 0 7px;white-space:normal}
+.block-editor{border:1px solid #d9e3ef;border-radius:10px;padding:12px;margin:9px 0;background:#fbfdff}.block-editor textarea{margin:8px 0;min-height:64px}.block-editor .secondary{font-size:12px;padding:7px 12px}.doc{width:100%;background:#eef4fd;text-align:left;color:#1c3558;margin:0 0 7px;white-space:normal}
 pre{white-space:pre-wrap;word-break:break-word;background:#f5f8fc;padding:15px;border-radius:8px;min-height:100px}
 label{font-weight:600;font-size:13px}#status{white-space:pre-wrap;color:#455972;margin:10px 0}
 a{color:#2866bf}@media(max-width:700px){main{grid-template-columns:1fr}}
@@ -22,6 +22,7 @@ a{color:#2866bf}@media(max-width:700px){main{grid-template-columns:1fr}}
 <button id="create">创建</button><h2 style="margin-top:26px">文档列表</h2><div id="docs"></div></section>
 <section><h2 id="heading">选择一篇文档</h2><p id="link"></p>
 <label>当前文档内容（只读预览）</label><pre id="preview">从左侧选择文档进行预览。</pre>
+<h2>段落编辑</h2><p class="note">仅支持普通文本块；修改前会检查块类型。其他复杂富文本请在飞书中编辑。</p><div id="paragraphs"></div>
 <h2>追加内容</h2><p class="note">本版本采用安全的追加编辑模式，不会整篇覆盖飞书已有内容。</p>
 <textarea rows="10" id="text" placeholder="输入要追加到文档末尾的内容，支持换行"></textarea>
 <button id="append" disabled>追加并同步到飞书</button><button class="secondary" id="refresh" disabled>刷新预览</button>
@@ -57,7 +58,35 @@ async function selectDoc(doc) {
 async function refresh() {
  if(!current)return;
  try{const data=await api('/api/docs/'+encodeURIComponent(current.id));
- $('preview').textContent=data.content||'(空文档)';status('已从飞书同步');}catch(e){status(e.message);}
+ $('preview').textContent=data.content||'(空文档)';
+ await loadParagraphs(current.id);status('已从飞书同步');}catch(e){status(e.message);}
+}
+async function loadParagraphs(docId) {
+ const root=$('paragraphs'); root.replaceChildren();
+ const response=await api('/api/docs/'+encodeURIComponent(docId)+'/blocks');
+ const items=Array.isArray(response.items)?response.items:[];
+ let count=0;
+ for(const block of items){
+  if(block.block_type!==2 || !block.block_id || !Array.isArray(block.text?.elements)) continue;
+  const elements=block.text.elements;
+  if(elements.some(e=>typeof e.text_run?.content!=='string')) continue;
+  const original=elements.map(e=>e.text_run.content).join('');
+  const wrap=document.createElement('div');wrap.className='block-editor';
+  const caption=document.createElement('label');caption.textContent='文本块 '+(++count);
+  const area=document.createElement('textarea');area.value=original;area.rows=3;area.maxLength=20000;
+  const button=document.createElement('button');button.className='secondary';button.textContent='保存该段落';
+  button.onclick=async()=>{
+   if(!current || current.id!==docId)return status('文档已切换，请刷新');
+   if(area.value===original)return status('内容没有变化');
+   if(!confirm('确认覆盖此文本块的现有内容？'))return;
+   button.disabled=true;
+   try {await api('/api/docs/'+encodeURIComponent(docId)+'/blocks/'+encodeURIComponent(block.block_id),'PATCH',{text:area.value});
+    await refresh();status('段落修改成功');}catch(e){status('保存失败：'+e.message);}
+   finally {button.disabled=false;}
+  };
+  wrap.append(caption,area,button);root.append(wrap);
+ }
+ if(count===0)root.textContent='当前没有可编辑的普通文本段落。';
 }
 $('load').onclick=list;
 $('create').onclick=async()=>{
