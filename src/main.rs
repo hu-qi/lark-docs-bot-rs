@@ -80,8 +80,7 @@ async fn allowed(state: &AppState, headers: &HeaderMap, id: &str, write: bool) -
     if !valid_id(id) { return Err(problem(StatusCode::BAD_REQUEST, "Invalid document ID")); }
     let doc = state.registry.lock().await.get(id).cloned()
         .ok_or_else(|| problem(StatusCode::NOT_FOUND, "Document not registered"))?;
-    if write { require(headers, &state.config, 1)?; }
-    else if !doc.public_read { require(headers, &state.config, 1)?; }
+    if write || !doc.public_read { require(headers, &state.config, 1)?; }
     Ok(doc)
 }
 async fn lark_token(state: &AppState) -> ApiResult<String> {
