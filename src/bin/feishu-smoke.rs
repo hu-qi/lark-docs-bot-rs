@@ -50,14 +50,14 @@ async fn verify() -> Result<(), String> {
         return Err(format!("Authentication failed: HTTP {} code={}", auth_status, auth["code"]));
     }
     let token = auth["tenant_access_token"].as_str().ok_or("Missing tenant token")?;
-    println!("STEP 1/4: tenant_access_token granted");
+    println!("STEP 1/5: tenant_access_token granted");
 
     // Running this creates a new document in the application's default location.
     let marker = format!("Lark Docs Bot API Smoke {}", env::var("GITHUB_RUN_ID").unwrap_or_else(|_| "manual".into()));
     let created = call(&client, Method::POST, &format!("{base}/docx/v1/documents"), Some(token),
         Some(json!({"title":marker}))).await?;
     let id = created["document"]["document_id"].as_str().ok_or("Missing document_id")?;
-    println!("STEP 2/4: create document OK (id: {id})");
+    println!("STEP 2/5: create document OK (id: {id})");
     println!("Test document URL: https://www.feishu.cn/docx/{id}");
 
     let text = "Automated integration test: 飞书文档读写验证";
@@ -65,12 +65,23 @@ async fn verify() -> Result<(), String> {
         &format!("{base}/docx/v1/documents/{id}/blocks/{id}/children"), Some(token),
         Some(json!({"children":[{"block_type":2,"text":{"elements":[{"text_run":{"content":text}}]}}]}))).await?;
     let block_id = inserted["children"][0]["block_id"].as_str().ok_or("Missing created block_id")?;
-    println!("STEP 3/4: append text block OK");
+    println!("STEP 3/5: append text block OK");
 
     let read = call(&client, Method::GET, &format!("{base}/docx/v1/documents/{id}/raw_content"), Some(token), None).await?;
     let content = read["content"].as_str().ok_or("Missing raw_content")?;
     if !content.contains(text) { return Err("Readback did not contain expected text".into()); }
-    println!("STEP 4/4: readback content verified");
+    println!("STEP 4/5: readback content verified");
+
+    let replacement = "Automated integration test: 修改段落成功";
+    call(&client, Method::PATCH,
+        &format!("{base}/docx/v1/documents/{id}/blocks/{block_id}"), Some(token),
+        Some(json!({"update_text_elements":{"elements":[{"text_run":{"content":replacement}}]}}))).await?;
+    let updated = call(&client, Method::GET,
+        &format!("{base}/docx/v1/documents/{id}/raw_content"), Some(token), None).await?;
+    if !updated["content"].as_str().unwrap_or("").contains(replacement) {
+        return Err("Updated block did not round-trip".into());
+    }
+    println!("STEP 5/5: block update and readback verified");
     println!("Smoke test succeeded. Document and block IDs: {id} / {block_id}");
     Ok(())
 }
