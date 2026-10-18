@@ -172,7 +172,7 @@ async fn append(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<St
     Ok(Json(append_internal(&s, &id, &req.text).await?))
 }
 async fn replace_block_internal(s: &AppState, id: &str, block_id: &str, text: &str) -> ApiResult<Value> {
-    if !valid_id(&block_id) || block_id == id {
+    if !valid_id(block_id) || block_id == id {
         return Err(problem(StatusCode::BAD_REQUEST, "Invalid editable block ID"));
     }
     if text.chars().count() > 20000 {
