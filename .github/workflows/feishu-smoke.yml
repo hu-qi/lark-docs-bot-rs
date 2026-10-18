@@ -31,4 +31,4 @@ jobs:
         env:
           LARK_APP_ID: ${{ secrets.APPID }}
           LARK_APP_SECRET: ${{ secrets.APPSECRET }}
-        run: cargo run --locked --bin feishu-smoke
+        run: cargo run --bin feishu-smoke
