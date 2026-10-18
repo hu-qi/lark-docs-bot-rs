@@ -1,0 +1,34 @@
+name: Feishu API Live Smoke Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feishu-live-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Check configured credentials
+        env:
+          LARK_APP_ID: ${{ secrets.APPID }}
+          LARK_APP_SECRET: ${{ secrets.APPSECRET }}
+        run: |
+          if [ -z "$LARK_APP_ID" ] || [ -z "$LARK_APP_SECRET" ]; then
+            echo "::error::Configure repository secrets APPID and APPSECRET first"
+            exit 1
+          fi
+      - name: Test Feishu authentication, document creation and readback
+        env:
+          LARK_APP_ID: ${{ secrets.APPID }}
+          LARK_APP_SECRET: ${{ secrets.APPSECRET }}
+        run: cargo run --locked --bin feishu-smoke
