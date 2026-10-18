@@ -228,6 +228,7 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap, Json(message): Json<
             {"name":"list_documents","description":"List documents registered in this gateway","inputSchema":{"type":"object","properties":{}}},
             {"name":"create_document","description":"Create a new Feishu document","inputSchema":{"type":"object","properties":{"title":{"type":"string"}},"required":["title"]}},
             {"name":"read_document","description":"Read registered document text","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}},
+            {"name":"list_blocks","description":"List first page of registered document blocks","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}},
             {"name":"append_text","description":"Append text to a registered document","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"]}}
         ]})),
         "tools/call" => {
@@ -248,6 +249,11 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap, Json(message): Json<
                         let doc_id = args["id"].as_str().unwrap_or("");
                         allowed(&s, &headers, doc_id, false).await?;
                         lark(&s, reqwest::Method::GET, &format!("/docx/v1/documents/{doc_id}/raw_content"), None).await
+                    }
+                    "list_blocks" => {
+                        let doc_id = args["id"].as_str().unwrap_or("");
+                        allowed(&s, &headers, doc_id, false).await?;
+                        lark(&s, reqwest::Method::GET, &format!("/docx/v1/documents/{doc_id}/blocks?page_size=100"), None).await
                     }
                     "append_text" => {
                         let doc_id = args["id"].as_str().unwrap_or("");
