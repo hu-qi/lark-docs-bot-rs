@@ -60,3 +60,9 @@ Feishu permissions and actual API functionality must be validated in your tenant
 Rotate any application secret previously exposed in chat, logs, or screenshots.
 
 See .env.example, Dockerfile, compose.yaml, and .github/workflows/ci.yml.
+
+## Live Feishu integration smoke test
+
+After normal CI passes, open [Feishu API Live Smoke Test](https://github.com/hu-qi/lark-docs-bot-rs/actions/workflows/feishu-smoke.yml), select **Run workflow** on main, and run it manually. This action uses the repository's APPID / APPSECRET secrets, obtains a tenant access token, creates a labelled test document, appends a text block, and verifies raw-content readback. It intentionally does not run automatically on every push and does not delete test documents. The workflow prints the created document identifier and URL, **not** application credentials or tenant tokens. Only run in a test tenant or if creating one test document in the production tenant is acceptable.
+
+If the live smoke fails with an authorization error, inspect Feishu app scopes, publication/installation status, and access permissions. Errors such as Feishu 91403 often indicate application document permission is missing. This workflow checks create/read/append only; block modification still requires a separate live test.
