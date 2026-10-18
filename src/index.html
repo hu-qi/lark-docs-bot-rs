@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lark Docs Bot</title><style>
+:root{font-family:system-ui,-apple-system,"PingFang SC",sans-serif;color:#182338;background:#f4f7fb}
+*{box-sizing:border-box}body{margin:0}header{background:#152c50;color:white;padding:18px max(24px,calc((100vw - 1100px)/2))}header h1{margin:0;font-size:22px}
+header small{color:#b9c8e3}main{max-width:1100px;margin:24px auto;display:grid;grid-template-columns:300px 1fr;gap:20px;padding:0 18px}
+section{border:1px solid #dce4ef;background:white;border-radius:12px;padding:20px;min-width:0}
+input,textarea,button{font:inherit}input,textarea{display:block;border:1px solid #c7d3e1;border-radius:8px;width:100%;padding:10px;margin:7px 0 14px}
+button{background:#2365cc;color:white;border:none;border-radius:8px;padding:10px 14px;cursor:pointer}
+button.secondary{background:#e9eff9;color:#233b5d}button:disabled{opacity:.55}button+button{margin-left:6px}
+h2{font-size:17px;margin:0 0 16px}.note{font-size:12px;color:#62748f;line-height:1.5}
+.doc{width:100%;background:#eef4fd;text-align:left;color:#1c3558;margin:0 0 7px;white-space:normal}
+pre{white-space:pre-wrap;word-break:break-word;background:#f5f8fc;padding:15px;border-radius:8px;min-height:100px}
+label{font-weight:600;font-size:13px}#status{white-space:pre-wrap;color:#455972;margin:10px 0}
+a{color:#2866bf}@media(max-width:700px){main{grid-template-columns:1fr}}
+</style></head><body><header><h1>Lark Docs Bot</h1><small>飞书文档 · Web 编辑器 · REST API · MCP</small></header>
+<main><section><h2>访问认证</h2>
+<label for="key">API Key（管理员或写入密钥）</label><input type="password" id="key" autocomplete="off" placeholder="仅保存在当前浏览器标签页">
+<p class="note">管理员密钥可创建文档、修改公开只读状态；写入密钥可查看文档列表、读写已登记文档。建议仅在 HTTPS 下使用。</p>
+<button id="load">刷新列表</button><h2 style="margin-top:26px">创建文档</h2>
+<input id="title" maxlength="200" placeholder="请输入文档标题">
+<button id="create">创建</button><h2 style="margin-top:26px">文档列表</h2><div id="docs"></div></section>
+<section><h2 id="heading">选择一篇文档</h2><p id="link"></p>
+<label>当前文档内容（只读预览）</label><pre id="preview">从左侧选择文档进行预览。</pre>
+<h2>追加内容</h2><p class="note">本版本采用安全的追加编辑模式，不会整篇覆盖飞书已有内容。</p>
+<textarea rows="10" id="text" placeholder="输入要追加到文档末尾的内容，支持换行"></textarea>
+<button id="append" disabled>追加并同步到飞书</button><button class="secondary" id="refresh" disabled>刷新预览</button>
+<div id="adminControls" hidden><h2 style="margin-top:24px">管理员访问控制</h2><label><input id="public" style="display:inline;width:auto;margin:0" type="checkbox">允许匿名通过本服务读取此文档</label><p class="note">此选项仅影响网关 API，不改变飞书原生的文档分享权限。</p><button id="saveAccess" class="secondary">保存访问控制</button></div>
+<p id="status" role="status" aria-live="polite"></p></section></main>
+<script>
+let current=null;
+const $=id=>document.getElementById(id);
+const token=()=>sessionStorage.getItem('lark_api_key')||'';
+$('key').value=token();
+$('key').addEventListener('input',()=>sessionStorage.setItem('lark_api_key',$('key').value));
+async function api(path, method='GET', body) {
+ const h={'Authorization':'Bearer '+token()};
+ if(body!==undefined) h['Content-Type']='application/json';
+ const r=await fetch(path,{method,headers:h,body:body===undefined?undefined:JSON.stringify(body)});
+ const data=await r.json().catch(()=>({error:'Invalid JSON response'}));
+ if(!r.ok) throw Error(data.error||'HTTP '+r.status);
+ return data;
+}
+const status=msg=>$('status').textContent=msg;
+async function list() {
+ try { const result=await api('/api/docs');$('docs').replaceChildren();
+ for (const d of result.documents) {const b=document.createElement('button');b.className='doc';b.textContent=d.title+(d.public_read?' · 公开只读':'');b.onclick=()=>selectDoc(d);$('docs').append(b);}
+ status('已加载 '+result.documents.length+' 篇文档');
+ }catch(e){status(e.message);}
+}
+async function selectDoc(doc) {
+ current=doc;$('heading').textContent=doc.title;$('append').disabled=false;$('refresh').disabled=false;
+ $('public').checked=doc.public_read;$('adminControls').hidden=false;
+ const a=document.createElement('a');a.href=doc.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent='在飞书中打开 ↗';$('link').replaceChildren(a);
+ await refresh();
+}
+async function refresh() {
+ if(!current)return;
+ try{const data=await api('/api/docs/'+encodeURIComponent(current.id));
+ $('preview').textContent=data.content||'(空文档)';status('已从飞书同步');}catch(e){status(e.message);}
+}
+$('load').onclick=list;
+$('create').onclick=async()=>{
+ try {const d=await api('/api/docs','POST',{title:$('title').value.trim()});$('title').value='';await list();await selectDoc(d);}
+ catch(e){status(e.message);}
+};
+$('append').onclick=async()=>{
+ if(!current)return;
+ const text=$('text').value;if(!text.trim())return status('请输入正文');
+ try{await api('/api/docs/'+encodeURIComponent(current.id)+'/append','POST',{text});
+ $('text').value='';await refresh();status('追加成功');}catch(e){status(e.message);}
+};
+$('refresh').onclick=refresh;
+$('saveAccess').onclick=async()=>{
+ if(!current)return;
+ try {await api('/api/docs/'+encodeURIComponent(current.id)+'/access','POST',{public_read:$('public').checked});
+ current.public_read=$('public').checked;await list();status('访问控制已更新');}catch(e){status(e.message);}
+};
+</script></body></html>
