@@ -171,12 +171,11 @@ async fn append(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<St
     allowed(&s, &headers, &id, true).await?;
     Ok(Json(append_internal(&s, &id, &req.text).await?))
 }
-async fn replace_block(State(s): State<AppState>, headers: HeaderMap, Path((id, block_id)): Path<(String, String)>, Json(req): Json<ReplaceBlock>) -> ApiResult<Json<Value>> {
-    allowed(&s, &headers, &id, true).await?;
+async fn replace_block_internal(s: &AppState, id: &str, block_id: &str, text: &str) -> ApiResult<Value> {
     if !valid_id(&block_id) || block_id == id {
         return Err(problem(StatusCode::BAD_REQUEST, "Invalid editable block ID"));
     }
-    if req.text.chars().count() > 20000 {
+    if text.chars().count() > 20000 {
         return Err(problem(StatusCode::BAD_REQUEST, "Block text exceeds 20000 characters"));
     }
     // Limit modification to plain text blocks. Do not silently overwrite
@@ -195,8 +194,13 @@ async fn replace_block(State(s): State<AppState>, headers: HeaderMap, Path((id, 
         return Err(problem(StatusCode::BAD_REQUEST, "Refusing to overwrite styled or mixed rich text content"));
     }
     let data = lark(&s, reqwest::Method::PATCH, &format!("/docx/v1/documents/{id}/blocks/{block_id}"),
-        Some(json!({"update_text_elements":{"elements":[{"text_run":{"content":req.text}}]}}))).await?;
-    Ok(Json(data))
+        Some(json!({"update_text_elements":{"elements":[{"text_run":{"content":text}}]}}))).await?;
+
+    Ok(data)
+}
+async fn replace_block(State(s): State<AppState>, headers: HeaderMap, Path((id, block_id)): Path<(String, String)>, Json(req): Json<ReplaceBlock>) -> ApiResult<Json<Value>> {
+    allowed(&s, &headers, &id, true).await?;
+    Ok(Json(replace_block_internal(&s, &id, &block_id, &req.text).await?))
 }
 async fn set_access(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<String>, Json(req): Json<AccessChange>) -> ApiResult<Json<Value>> {
     require(&headers, &s.config, 2)?;
@@ -229,7 +233,8 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap, Json(message): Json<
             {"name":"create_document","description":"Create a new Feishu document","inputSchema":{"type":"object","properties":{"title":{"type":"string"}},"required":["title"]}},
             {"name":"read_document","description":"Read registered document text","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}},
             {"name":"list_blocks","description":"List first page of registered document blocks","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}},
-            {"name":"append_text","description":"Append text to a registered document","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"]}}
+            {"name":"append_text","description":"Append text to a registered document","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"]}},
+            {"name":"update_text_block","description":"Replace a single unstyled plain-text block in a registered document; refuses rich or mixed elements","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"block_id":{"type":"string"},"text":{"type":"string"}},"required":["id","block_id","text"]}}
         ]})),
         "tools/call" => {
             let args = &message["params"]["arguments"];
@@ -259,6 +264,13 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap, Json(message): Json<
                         let doc_id = args["id"].as_str().unwrap_or("");
                         allowed(&s, &headers, doc_id, true).await?;
                         append_internal(&s, doc_id, args["text"].as_str().unwrap_or("")).await
+                    }
+                    "update_text_block" => {
+                        let doc_id = args["id"].as_str().unwrap_or("");
+                        let block_id = args["block_id"].as_str().unwrap_or("");
+                        let text = args["text"].as_str().ok_or_else(|| problem(StatusCode::BAD_REQUEST, "Missing text"))?;
+                        allowed(&s, &headers, doc_id, true).await?;
+                        replace_block_internal(&s, doc_id, block_id, text).await
                     }
                     _ => Err(problem(StatusCode::BAD_REQUEST,"Unknown tool")),
                 }
