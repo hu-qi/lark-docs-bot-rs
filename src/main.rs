@@ -41,6 +41,8 @@ struct AppendText { text: String }
 #[derive(Deserialize)]
 struct ReplaceBlock { text: String }
 #[derive(Deserialize)]
+struct DeleteBlockRequest { parent_id: String, block_id: String, index: usize, document_revision_id: i64 }
+#[derive(Deserialize)]
 struct AccessChange { public_read: bool }
 
 fn problem(status: StatusCode, message: impl Into<String>) -> (StatusCode, Json<Value>) {
@@ -202,6 +204,41 @@ async fn replace_block(State(s): State<AppState>, headers: HeaderMap, Path((id, 
     allowed(&s, &headers, &id, true).await?;
     Ok(Json(replace_block_internal(&s, &id, &block_id, &req.text).await?))
 }
+fn verify_delete_candidate(items: &[Value], index: usize, block_id: &str) -> ApiResult<()> {
+    let current = items.get(index).and_then(|block| block["block_id"].as_str());
+    if current != Some(block_id) {
+        return Err(problem(StatusCode::CONFLICT, "Target block moved or is not present at the expected index"));
+    }
+    Ok(())
+}
+async fn delete_block_internal(s: &AppState, id: &str, req: &DeleteBlockRequest) -> ApiResult<Value> {
+    if !valid_id(&req.parent_id) || !valid_id(&req.block_id)
+        || req.block_id == id || req.block_id == req.parent_id
+        || req.document_revision_id < 0
+        || req.index >= 500
+    {
+        return Err(problem(StatusCode::BAD_REQUEST, "Invalid delete parameters; require explicit nonnegative document revision"));
+    }
+    // Read the exact version supplied by the caller. Never fetch the latest and
+    // then delete at an unpinned index: concurrent edits could change the target.
+    let path = format!("/docx/v1/documents/{id}/blocks/{}/children?document_revision_id={}&page_size=500",
+        req.parent_id, req.document_revision_id);
+    let children = lark(s, reqwest::Method::GET, &path, None).await?;
+    if children["has_more"].as_bool() == Some(true) {
+        return Err(problem(StatusCode::CONFLICT, "Parent has more than one page of children; deletion is disabled"));
+    }
+    let items = children["items"].as_array().ok_or_else(||
+        problem(StatusCode::BAD_GATEWAY, "Feishu did not return a valid child block collection"))?;
+    verify_delete_candidate(items, req.index, &req.block_id)?;
+    let path = format!("/docx/v1/documents/{id}/blocks/{}/children/batch_delete?document_revision_id={}",
+        req.parent_id, req.document_revision_id);
+    lark(s, reqwest::Method::DELETE, &path,
+        Some(json!({"start_index":req.index,"end_index":req.index + 1}))).await
+}
+async fn delete_block(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<String>, Json(req): Json<DeleteBlockRequest>) -> ApiResult<Json<Value>> {
+    allowed(&s, &headers, &id, true).await?;
+    Ok(Json(delete_block_internal(&s, &id, &req).await?))
+}
 async fn set_access(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<String>, Json(req): Json<AccessChange>) -> ApiResult<Json<Value>> {
     require(&headers, &s.config, 2)?;
     let mut registry = s.registry.lock().await;
@@ -234,7 +271,8 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap, Json(message): Json<
             {"name":"read_document","description":"Read registered document text","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}},
             {"name":"list_blocks","description":"List first page of registered document blocks","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}},
             {"name":"append_text","description":"Append text to a registered document","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"]}},
-            {"name":"update_text_block","description":"Replace a single unstyled plain-text block in a registered document; refuses rich or mixed elements","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"block_id":{"type":"string"},"text":{"type":"string"}},"required":["id","block_id","text"]}}
+            {"name":"update_text_block","description":"Replace a single unstyled plain-text block in a registered document; refuses rich or mixed elements","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"block_id":{"type":"string"},"text":{"type":"string"}},"required":["id","block_id","text"]}},
+            {"name":"delete_block","description":"Delete a verified child block at an explicit Feishu document revision and index; requires writer key","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"parent_id":{"type":"string"},"block_id":{"type":"string"},"index":{"type":"integer","minimum":0},"document_revision_id":{"type":"integer","minimum":0}},"required":["id","parent_id","block_id","index","document_revision_id"]}}
         ]})),
         "tools/call" => {
             let args = &message["params"]["arguments"];
@@ -271,6 +309,13 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap, Json(message): Json<
                         let text = args["text"].as_str().ok_or_else(|| problem(StatusCode::BAD_REQUEST, "Missing text"))?;
                         allowed(&s, &headers, doc_id, true).await?;
                         replace_block_internal(&s, doc_id, block_id, text).await
+                    }
+                    "delete_block" => {
+                        let doc_id = args["id"].as_str().unwrap_or("");
+                        allowed(&s, &headers, doc_id, true).await?;
+                        let params: DeleteBlockRequest = serde_json::from_value(args.clone()).map_err(|_|
+                            problem(StatusCode::BAD_REQUEST, "Invalid delete_block arguments"))?;
+                        delete_block_internal(&s, doc_id, &params).await
                     }
                     _ => Err(problem(StatusCode::BAD_REQUEST,"Unknown tool")),
                 }
@@ -318,6 +363,7 @@ async fn main() {
         .route("/api/docs/{id}/blocks", get(blocks))
         .route("/api/docs/{id}/append", post(append))
         .route("/api/docs/{id}/blocks/{block_id}", axum::routing::patch(replace_block))
+        .route("/api/docs/{id}/blocks/delete", post(delete_block))
         .route("/api/docs/{id}/access", post(set_access))
         .route("/mcp", post(mcp))
         .layer(RequestBodyLimitLayer::new(1024 * 256))
