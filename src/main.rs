@@ -381,6 +381,12 @@ mod tests {
         assert!(!valid_id("../secret"));
         assert!(!valid_id(""));
     }
+    #[test] fn guarded_delete_rejects_stale_position() {
+        let items = vec![json!({"block_id":"alpha"}), json!({"block_id":"beta"})];
+        assert!(verify_delete_candidate(&items, 1, "beta").is_ok());
+        assert!(verify_delete_candidate(&items, 1, "alpha").is_err());
+        assert!(verify_delete_candidate(&items, 2, "beta").is_err());
+    }
     #[test] fn timing_safe_equal() {
         assert!(equal("somekey", "somekey"));
         assert!(!equal("somekey", "anotherkey"));
