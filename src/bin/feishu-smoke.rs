@@ -41,8 +41,14 @@ async fn verify() -> Result<(), String> {
     let base = env::var("LARK_API_BASE").unwrap_or_else(|_| "https://open.feishu.cn/open-apis".into());
     let client = Client::builder().timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())?;
 
-    let auth = call(&client, Method::POST, &format!("{base}/auth/v3/tenant_access_token/internal"), None,
-        Some(json!({"app_id":app_id,"app_secret":app_secret}))).await?;
+    let auth_response = client.post(format!("{base}/auth/v3/tenant_access_token/internal"))
+        .json(&json!({"app_id":app_id,"app_secret":app_secret}))
+        .send().await.map_err(|e| format!("Authentication request failed: {e}"))?;
+    let auth_status = auth_response.status();
+    let auth: Value = auth_response.json().await.map_err(|e| format!("Authentication response malformed: {e}"))?;
+    if !auth_status.is_success() || auth["code"].as_i64() != Some(0) {
+        return Err(format!("Authentication failed: HTTP {} code={}", auth_status, auth["code"]));
+    }
     let token = auth["tenant_access_token"].as_str().ok_or("Missing tenant token")?;
     println!("STEP 1/4: tenant_access_token granted");
 
