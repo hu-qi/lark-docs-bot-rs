@@ -169,6 +169,17 @@ async fn blocks(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<St
     let data = lark(&s, reqwest::Method::GET, &format!("/docx/v1/documents/{id}/blocks?page_size=100"), None).await?;
     Ok(Json(data))
 }
+async fn get_document_metadata(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    allowed(&s, &headers, &id, false).await?;
+    Ok(Json(lark(&s, reqwest::Method::GET, &format!("/docx/v1/documents/{id}"), None).await?))
+}
+async fn get_children(State(s): State<AppState>, headers: HeaderMap, Path((id,parent_id)): Path<(String,String)>) -> ApiResult<Json<Value>> {
+    allowed(&s, &headers, &id, false).await?;
+    if !valid_id(&parent_id) {
+        return Err(problem(StatusCode::BAD_REQUEST, "Invalid parent block ID"));
+    }
+    Ok(Json(lark(&s, reqwest::Method::GET, &format!("/docx/v1/documents/{id}/blocks/{parent_id}/children?page_size=500"), None).await?))
+}
 async fn append(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<String>, Json(req): Json<AppendText>) -> ApiResult<Json<Value>> {
     allowed(&s, &headers, &id, true).await?;
     Ok(Json(append_internal(&s, &id, &req.text).await?))
@@ -361,6 +372,8 @@ async fn main() {
         .route("/api/docs", get(list_docs).post(create_doc))
         .route("/api/docs/{id}", get(get_doc))
         .route("/api/docs/{id}/blocks", get(blocks))
+        .route("/api/docs/{id}/metadata", get(get_document_metadata))
+        .route("/api/docs/{id}/blocks/{parent_id}/children", get(get_children))
         .route("/api/docs/{id}/append", post(append))
         .route("/api/docs/{id}/blocks/{block_id}", axum::routing::patch(replace_block))
         .route("/api/docs/{id}/blocks/delete", post(delete_block))
