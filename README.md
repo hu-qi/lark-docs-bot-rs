@@ -47,7 +47,7 @@ Gateway public-read: POST /api/docs/{id}/access JSON {"public_read":true}
 ## MCP
 
 Point an HTTP JSON-RPC MCP client at https://your-host/mcp and pass a Bearer token.
-Supported tools: list_documents, create_document, read_document, append_text.
+Supported tools: list_documents, create_document, read_document, list_blocks, append_text, update_text_block.
 Creating documents requires administrator key. Protocol version 2025-03-26.
 
 ## Limitations
@@ -71,3 +71,10 @@ If the live smoke fails with an authorization error, inspect Feishu app scopes, 
 ## Web editing (experimental)
 
 The editor reads the first page of blocks (up to 100), displays editable plain-text blocks and updates them via PATCH. Rich content, nested structures and additional pagination are not yet supported by the browser UI. All block edits require the writer/admin key and registered-document access. Because replacing a text block can alter formatting, avoid editing styled or mixed content until richer element-aware updates are implemented.
+
+
+### MCP edit example
+
+Use `tools/call` with `name: "update_text_block"` and arguments `{"id":"DOCUMENT_ID","block_id":"TEXT_BLOCK_ID","text":"New paragraph"}`. The tool requires a writer/admin key and applies the same plain-text-only validation as the REST PATCH route. Obtain `block_id` from `list_blocks`. The current MCP endpoint supports JSON-RPC POST only (not full Streamable HTTP sessions).
+
+**Deletion is not enabled yet:** Feishu deletes blocks by parent and child index range rather than by standalone block ID. Safe deletion must verify the current parent order and document revision to avoid deleting the wrong block when collaborators edit concurrently. See [Feishu Docx guide](https://open.larkoffice.com/document/server-docs/docs/docs/docx-v1/guide).
