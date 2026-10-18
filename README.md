@@ -78,3 +78,14 @@ The editor reads the first page of blocks (up to 100), displays editable plain-t
 Use `tools/call` with `name: "update_text_block"` and arguments `{"id":"DOCUMENT_ID","block_id":"TEXT_BLOCK_ID","text":"New paragraph"}`. The tool requires a writer/admin key and applies the same plain-text-only validation as the REST PATCH route. Obtain `block_id` from `list_blocks`. The current MCP endpoint supports JSON-RPC POST only (not full Streamable HTTP sessions).
 
 **Deletion is not enabled yet:** Feishu deletes blocks by parent and child index range rather than by standalone block ID. Safe deletion must verify the current parent order and document revision to avoid deleting the wrong block when collaborators edit concurrently. See [Feishu Docx guide](https://open.larkoffice.com/document/server-docs/docs/docs/docx-v1/guide).
+
+
+## Revision-pinned block deletion (experimental)
+
+Deletion is deliberately not available in the browser UI. This API requires an existing registered document, writer/admin credentials, the **exact child block ID and index**, its parent block ID, and an explicit nonnegative `document_revision_id`. Inspect the document via `GET /api/docs/{id}/metadata` (document revision) and `GET /api/docs/{id}/blocks/{parent_id}/children` (child IDs and order). Then call `POST /api/docs/{id}/blocks/delete` with JSON:
+
+```json
+{"parent_id":"PARENT_BLOCK_ID","block_id":"CHILD_BLOCK_ID","index":0,"document_revision_id":123}
+```
+
+The gateway queries the same revision, rejects mismatched child IDs and incomplete child pages, and sends the supplied revision to Feishu's `batch_delete` API. Never use `-1` (latest) for deletion. An external concurrent edit may cause Feishu to reject the supplied document revision; do not retry automatically with the latest revision. MCP exposes the same guarded `delete_block` tool. **Deleting is destructive; verify on a disposable document before production use.**
