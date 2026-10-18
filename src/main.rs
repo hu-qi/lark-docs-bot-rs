@@ -180,7 +180,7 @@ async fn replace_block_internal(s: &AppState, id: &str, block_id: &str, text: &s
     }
     // Limit modification to plain text blocks. Do not silently overwrite
     // embedded images, mentions, tables or unsupported rich content.
-    let block = lark(&s, reqwest::Method::GET, &format!("/docx/v1/documents/{id}/blocks/{block_id}"), None).await?;
+    let block = lark(s, reqwest::Method::GET, &format!("/docx/v1/documents/{id}/blocks/{block_id}"), None).await?;
     let block_data = &block["block"];
     if block_data["block_type"].as_i64() != Some(2) {
         return Err(problem(StatusCode::BAD_REQUEST, "Only plain text blocks can be edited"));
@@ -193,7 +193,7 @@ async fn replace_block_internal(s: &AppState, id: &str, block_id: &str, text: &s
     }) {
         return Err(problem(StatusCode::BAD_REQUEST, "Refusing to overwrite styled or mixed rich text content"));
     }
-    let data = lark(&s, reqwest::Method::PATCH, &format!("/docx/v1/documents/{id}/blocks/{block_id}"),
+    let data = lark(s, reqwest::Method::PATCH, &format!("/docx/v1/documents/{id}/blocks/{block_id}"),
         Some(json!({"update_text_elements":{"elements":[{"text_run":{"content":text}}]}}))).await?;
 
     Ok(data)
