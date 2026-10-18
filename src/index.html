@@ -69,7 +69,7 @@ async function loadParagraphs(docId) {
  for(const block of items){
   if(block.block_type!==2 || !block.block_id || !Array.isArray(block.text?.elements)) continue;
   const elements=block.text.elements;
-  if(elements.some(e=>typeof e.text_run?.content!=='string')) continue;
+  if(elements.length!==1 || elements.some(e=>typeof e.text_run?.content!=='string' || e.text_run.text_element_style)) continue;
   const original=elements.map(e=>e.text_run.content).join('');
   const wrap=document.createElement('div');wrap.className='block-editor';
   const caption=document.createElement('label');caption.textContent='文本块 '+(++count);
