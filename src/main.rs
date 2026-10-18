@@ -188,8 +188,11 @@ async fn replace_block(State(s): State<AppState>, headers: HeaderMap, Path((id, 
     }
     let elements = block_data["text"]["elements"].as_array()
         .ok_or_else(|| problem(StatusCode::BAD_REQUEST, "Block has unsupported content"))?;
-    if elements.iter().any(|element| element.get("text_run").is_none()) {
-        return Err(problem(StatusCode::BAD_REQUEST, "Refusing to overwrite mixed rich content"));
+    if elements.len() != 1 || elements.iter().any(|element| {
+        element.get("text_run").is_none()
+            || element["text_run"].get("text_element_style").is_some()
+    }) {
+        return Err(problem(StatusCode::BAD_REQUEST, "Refusing to overwrite styled or mixed rich text content"));
     }
     let data = lark(&s, reqwest::Method::PATCH, &format!("/docx/v1/documents/{id}/blocks/{block_id}"),
         Some(json!({"update_text_elements":{"elements":[{"text_run":{"content":req.text}}]}}))).await?;
