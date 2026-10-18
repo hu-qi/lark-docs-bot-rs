@@ -39,6 +39,8 @@ struct CreateDoc { title: String }
 #[derive(Deserialize)]
 struct AppendText { text: String }
 #[derive(Deserialize)]
+struct ReplaceBlock { text: String }
+#[derive(Deserialize)]
 struct AccessChange { public_read: bool }
 
 fn problem(status: StatusCode, message: impl Into<String>) -> (StatusCode, Json<Value>) {
@@ -134,8 +136,8 @@ async fn create_internal(state: &AppState, title: &str) -> ApiResult<Value> {
     Ok(json!({"id":id,"title":title,"url":doc_url(&state.config,&id),"public_read":false}))
 }
 async fn append_internal(state: &AppState, id: &str, text: &str) -> ApiResult<Value> {
-    if text.is_empty() || text.chars().count() > 20000 {
-        return Err(problem(StatusCode::BAD_REQUEST, "Text must contain 1-20000 characters"));
+    if text.is_empty() || text.chars().count() > 20000 || text.split('\n').count() > 50 {
+        return Err(problem(StatusCode::BAD_REQUEST, "Text must contain 1-20000 characters and at most 50 paragraphs"));
     }
     let blocks: Vec<Value> = text.split('\n').map(|line| json!({
         "block_type":2,
@@ -169,6 +171,30 @@ async fn blocks(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<St
 async fn append(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<String>, Json(req): Json<AppendText>) -> ApiResult<Json<Value>> {
     allowed(&s, &headers, &id, true).await?;
     Ok(Json(append_internal(&s, &id, &req.text).await?))
+}
+async fn replace_block(State(s): State<AppState>, headers: HeaderMap, Path((id, block_id)): Path<(String, String)>, Json(req): Json<ReplaceBlock>) -> ApiResult<Json<Value>> {
+    allowed(&s, &headers, &id, true).await?;
+    if !valid_id(&block_id) || block_id == id {
+        return Err(problem(StatusCode::BAD_REQUEST, "Invalid editable block ID"));
+    }
+    if req.text.chars().count() > 20000 {
+        return Err(problem(StatusCode::BAD_REQUEST, "Block text exceeds 20000 characters"));
+    }
+    // Limit modification to plain text blocks. Do not silently overwrite
+    // embedded images, mentions, tables or unsupported rich content.
+    let block = lark(&s, reqwest::Method::GET, &format!("/docx/v1/documents/{id}/blocks/{block_id}"), None).await?;
+    let block_data = &block["block"];
+    if block_data["block_type"].as_i64() != Some(2) {
+        return Err(problem(StatusCode::BAD_REQUEST, "Only plain text blocks can be edited"));
+    }
+    let elements = block_data["text"]["elements"].as_array()
+        .ok_or_else(|| problem(StatusCode::BAD_REQUEST, "Block has unsupported content"))?;
+    if elements.iter().any(|element| element.get("text_run").is_none()) {
+        return Err(problem(StatusCode::BAD_REQUEST, "Refusing to overwrite mixed rich content"));
+    }
+    let data = lark(&s, reqwest::Method::PATCH, &format!("/docx/v1/documents/{id}/blocks/{block_id}"),
+        Some(json!({"update_text_elements":{"elements":[{"text_run":{"content":req.text}}]}}))).await?;
+    Ok(Json(data))
 }
 async fn set_access(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<String>, Json(req): Json<AccessChange>) -> ApiResult<Json<Value>> {
     require(&headers, &s.config, 2)?;
@@ -271,6 +297,7 @@ async fn main() {
         .route("/api/docs/{id}", get(get_doc))
         .route("/api/docs/{id}/blocks", get(blocks))
         .route("/api/docs/{id}/append", post(append))
+        .route("/api/docs/{id}/blocks/{block_id}", axum::routing::patch(replace_block))
         .route("/api/docs/{id}/access", post(set_access))
         .route("/mcp", post(mcp))
         .layer(RequestBodyLimitLayer::new(1024 * 256))
