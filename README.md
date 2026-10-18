@@ -33,12 +33,14 @@ GitHub Actions secrets APPID / APPSECRET are not automatically passed to your ho
 | GET | /api/docs/{id} | writer/admin or explicitly public-read |
 | GET | /api/docs/{id}/blocks | writer/admin or explicitly public-read |
 | POST | /api/docs/{id}/append | writer/admin |
+| PATCH | /api/docs/{id}/blocks/{block_id} | writer/admin |
 | POST | /api/docs/{id}/access | admin |
 | POST | /mcp | tool-dependent |
 
 All privileged requests require header: Authorization: Bearer YOUR_KEY
 
 Create: POST /api/docs JSON {"title":"Sample"}
+Replace a plain-text block: PATCH /api/docs/{id}/blocks/{block_id} JSON {"text":"Revised paragraph"}
 Append: POST /api/docs/{id}/append JSON {"text":"Line 1\nLine 2"}
 Gateway public-read: POST /api/docs/{id}/access JSON {"public_read":true}
 
@@ -50,7 +52,7 @@ Creating documents requires administrator key. Protocol version 2025-03-26.
 
 ## Limitations
 
-This first editor appends text; it is NOT yet a WYSIWYG/full-replacement editor.
+The Web UI appends text; the REST API also replaces existing plain-text blocks. It is NOT yet a WYSIWYG/full-replacement editor. A block containing mentions, embeds or other non-text elements cannot be replaced via this simplified API.
 Gateway public-read does NOT modify native Feishu sharing permissions.
 MCP supports JSON-RPC POST; full Streamable HTTP transport extras such as SSE are not implemented.
 Gateway document metadata are stored in a JSON file; document bodies stay in Feishu.
