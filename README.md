@@ -1,155 +1,80 @@
 # Lark Docs Bot RS
 
-Rust/Axum Web editor + REST API + MCP gateway for Feishu Docx.
+基于 **Rust / Axum** 的飞书 Docx 文档网关：浏览器编辑器、REST API 与 MCP（无状态 Streamable HTTP JSON 响应）。
 
-## Features
+## 当前能力
 
-- Web UI: create, list, preview, append paragraphs.
-- REST API: create/list/read/append, block list, access control.
-- MCP JSON-RPC over HTTP POST: initialize, ping, tools/list, tools/call.
-- Document allowlist with persistent JSON registry; documents private by default.
-- Separate administrator and writer Bearer keys.
-- Docker and GitHub Actions CI.
+- 浏览器：文档创建、列表、原文/结构化预览，标题、列表、引用的新增与编辑；多 Text Run 分片编辑、加粗/斜体工具栏、待提交队列、编辑冲突提示。
+- REST：文档及 Block 读写、分页、元数据、指定版本删除、访问控制。
+- MCP：`initialize`、`ping`、`tools/list`、`tools/call`；工具包括 `list_documents`、`create_document`、`read_document`、`list_blocks`、`append_text`、`append_structured`、`update_text_block`、`update_text_runs`、`delete_block`。
+- 安全：Bearer 管理员/写入密钥、网关文档登记白名单、匿名只读显式授权、单实例角色限流、文本 Run 原文校验、防止混合嵌入块误覆盖。
+- 运维：Docker / Compose、Caddy HTTPS + CSP、容器健康检查、持久化文档登记数据、备份与恢复手册、CI 及 GHCR 镜像发布。
 
-## Deploy
+## 本地运行
 
-1. Copy .env.example to .env.
-2. Set LARK_APP_ID and LARK_APP_SECRET to your deployed Feishu app credentials.
-3. Create different, random 32+ character ADMIN_API_KEY and WRITE_API_KEY.
-4. Set LARK_DOC_BASE to your Feishu tenant domain.
-5. Run: docker compose up -d --build
-6. Configure an HTTPS reverse proxy and rate limiting in front of localhost:3000.
+```bash
+cp .env.example .env
+# 编辑 .env，填写 LARK_APP_ID / LARK_APP_SECRET，并生成两份不同的 32+ 字符 API Key
+docker compose up -d --build
+curl -fsS http://127.0.0.1:3000/health
+```
 
-GitHub Actions secrets APPID / APPSECRET are not automatically passed to your host. Map them to LARK_APP_ID / LARK_APP_SECRET at deployment time. CI itself needs no secrets.
+Feishu App 权限与应用发布状态必须支持 Docx API；只将凭证保存在私有的环境文件或托管服务秘密管理中。GitHub Actions secrets `APPID` 和 `APPSECRET` 仅用于手动的飞书真实联调，**不会自动配置生产主机**。
 
-## REST routes
+## REST 接口
 
-| Method | Endpoint | Access |
+| 方法 | 路径 | 授权 |
 | --- | --- | --- |
-| GET | /health | anyone |
-| GET | / | browser UI |
-| GET | /api/docs | writer/admin |
-| POST | /api/docs | admin |
-| GET | /api/docs/{id} | writer/admin or explicitly public-read |
-| GET | /api/docs/{id}/blocks | writer/admin or explicitly public-read |
-| POST | /api/docs/{id}/append | writer/admin |
-| PATCH | /api/docs/{id}/blocks/{block_id} | writer/admin |
-| POST | /api/docs/{id}/access | admin |
-| POST | /mcp | tool-dependent |
+| GET | `/health` | 无 |
+| GET | `/`、`/assets/app.js`、`/assets/app.css` | 无 |
+| GET/POST | `/api/docs` | 读：写入者；创建：管理员 |
+| GET | `/api/docs/{id}` | 写入者，或文档显式匿名只读 |
+| GET | `/api/docs/{id}/blocks?page_token=...` | 同上 |
+| GET | `/api/docs/{id}/metadata` | 同上 |
+| GET | `/api/docs/{id}/blocks/{parent_id}/children` | 同上 |
+| POST | `/api/docs/{id}/append` | 写入者 |
+| POST | `/api/docs/{id}/append-structured` | 写入者 |
+| PATCH | `/api/docs/{id}/blocks/{block_id}` | 写入者 |
+| PATCH | `/api/docs/{id}/blocks/{block_id}/runs` | 写入者 |
+| POST | `/api/docs/{id}/blocks/delete` | 写入者，须指定版本和父块位置 |
+| POST | `/api/docs/{id}/access` | 管理员 |
+| POST | `/mcp` | Bearer API Key |
 
-All privileged requests require header: Authorization: Bearer YOUR_KEY
+所有受保护请求发送 `Authorization: Bearer <API_KEY>`。`update_text_runs` 按原有 Run 顺序校验 `expected_text`，保留未主动修改的样式和其他属性。请求可按 Run 设置 `bold`/`italic`；不支持编辑嵌入式图片、表格和复杂非文本元素。读取后校验**不是原子的**：极端并发仍需由 Feishu 原生协作机制处理。
 
-Create: POST /api/docs JSON {"title":"Sample"}
-Replace a plain-text block: PATCH /api/docs/{id}/blocks/{block_id} JSON {"text":"Revised paragraph"}
-Append: POST /api/docs/{id}/append JSON {"text":"Line 1\nLine 2"}
-Gateway public-read: POST /api/docs/{id}/access JSON {"public_read":true}
-
-## MCP
-
-Point an HTTP JSON-RPC MCP client at https://your-host/mcp and pass a Bearer token.
-Supported tools: list_documents, create_document, read_document, list_blocks, append_text, update_text_block.
-Creating documents requires administrator key. Protocol version 2025-03-26.
-
-## Limitations
-
-The Web UI appends text; the REST API also replaces existing plain-text blocks. It is NOT yet a WYSIWYG/full-replacement editor. A block containing mentions, embeds or other non-text elements cannot be replaced via this simplified API.
-Gateway public-read does NOT modify native Feishu sharing permissions.
-MCP supports JSON-RPC POST; full Streamable HTTP transport extras such as SSE are not implemented.
-Gateway document metadata are stored in a JSON file; document bodies stay in Feishu.
-Feishu permissions and actual API functionality must be validated in your tenant.
-Rotate any application secret previously exposed in chat, logs, or screenshots.
-
-See .env.example, Dockerfile, compose.yaml, and .github/workflows/ci.yml.
-
-## Live Feishu integration smoke test
-
-After normal CI passes, open [Feishu API Live Smoke Test](https://github.com/hu-qi/lark-docs-bot-rs/actions/workflows/feishu-smoke.yml), select **Run workflow** on main, and run it manually. This action uses the repository's APPID / APPSECRET secrets, obtains a tenant access token, creates a labelled test document, appends a text block, verifies raw-content readback, updates that block, and verifies the updated text. It intentionally does not run automatically on every push and does not delete test documents. The workflow prints the created document identifier and URL, **not** application credentials or tenant tokens. Only run in a test tenant or if creating one test document in the production tenant is acceptable.
-
-If the live smoke fails with an authorization error, inspect Feishu app scopes, publication/installation status, and access permissions. Errors such as Feishu 91403 often indicate application document permission is missing. The live workflow checks create/read/append/update and leaves its test document in Feishu for inspection.
-
-
-## Web editing (experimental)
-
-The editor reads the first page of blocks (up to 100), displays editable plain-text blocks and updates them via PATCH. Rich content, nested structures and additional pagination are not yet supported by the browser UI. All block edits require the writer/admin key and registered-document access. Because replacing a text block can alter formatting, avoid editing styled or mixed content until richer element-aware updates are implemented.
-
-
-### MCP edit example
-
-Use `tools/call` with `name: "update_text_block"` and arguments `{"id":"DOCUMENT_ID","block_id":"TEXT_BLOCK_ID","text":"New paragraph"}`. The tool requires a writer/admin key and applies the same plain-text-only validation as the REST PATCH route. Obtain `block_id` from `list_blocks`. The current MCP endpoint supports JSON-RPC POST only (not full Streamable HTTP sessions).
-
-**Deletion is not enabled yet:** Feishu deletes blocks by parent and child index range rather than by standalone block ID. Safe deletion must verify the current parent order and document revision to avoid deleting the wrong block when collaborators edit concurrently. See [Feishu Docx guide](https://open.larkoffice.com/document/server-docs/docs/docs/docx-v1/guide).
-
-
-## Revision-pinned block deletion (experimental)
-
-Deletion is deliberately not available in the browser UI. This API requires an existing registered document, writer/admin credentials, the **exact child block ID and index**, its parent block ID, and an explicit nonnegative `document_revision_id`. Inspect the document via `GET /api/docs/{id}/metadata` (document revision) and `GET /api/docs/{id}/blocks/{parent_id}/children` (child IDs and order). Then call `POST /api/docs/{id}/blocks/delete` with JSON:
+### 富文本请求示例
 
 ```json
-{"parent_id":"PARENT_BLOCK_ID","block_id":"CHILD_BLOCK_ID","index":0,"document_revision_id":123}
+{"runs":[{"expected_text":"Plain ","text":"Updated ","bold":false},{"expected_text":"bold","text":"strong","italic":true}]}
 ```
 
-The gateway queries the same revision, rejects mismatched child IDs and incomplete child pages, and sends the supplied revision to Feishu's `batch_delete` API. Never use `-1` (latest) for deletion. An external concurrent edit may cause Feishu to reject the supplied document revision; do not retry automatically with the latest revision. MCP exposes the same guarded `delete_block` tool. **Deleting is destructive; verify on a disposable document before production use.**
+提交到 `PATCH /api/docs/{id}/blocks/{block_id}/runs`。对重要业务文档使用前，应运行手动 Feishu `test_multirun` 真实联调。
 
+## MCP 协议
 
-### Optional live deletion verification (manual only)
+`/mcp` 提供无状态 HTTP JSON-RPC；目前支持 `2025-03-26` 与 `2025-06-18` 协商，POST 请求返回 JSON，通知返回 HTTP 202，GET/DELETE 返回 HTTP 405。服务器不发出 MCP Session ID，也不提供服务器主动推送 SSE、会话恢复或 MRTR。适用于支持**无状态 JSON 响应**的 MCP HTTP 客户端，不宣称支持所有流式扩展。除 `initialize` 外，建议客户端发送所选择的 `MCP-Protocol-Version` 和 `Accept: application/json, text/event-stream`。
 
-The **Feishu API Live Smoke Test** workflow now has a `test_delete` input, **off by default**. When explicitly enabled, the smoke binary creates a NEW document, appends/updates its test block, reads that document's revision and child order, then deletes only the block it created and verifies readback. It never accepts existing document IDs from workflow inputs. The test document itself is preserved for inspection. Run this only in a tenant where writing a disposable test document is permitted; this is a destructive integration test of the test block, not a production document cleanup operation.
+完整的工具发现与请求协议可通过 `bash scripts/mcp-smoke.sh` 自动检查，运行前需要 `cargo build --bin lark-docs-bot-rs`。
 
+## 测试与发布
 
-### MCP stateless HTTP security and compatibility
+- 常规 CI：`cargo fmt`、`clippy`、`cargo test`、Release 构建、MCP HTTP 测试、Web JS 语法/安全 DOM 测试、生产 Compose 配置验证、Docker 构建。
+- [飞书真实联调](https://github.com/hu-qi/lark-docs-bot-rs/actions/workflows/feishu-smoke.yml)：手动运行、使用当次新建的测试文档；可勾选 `test_delete`、`test_structured`、`test_multirun`，默认全部关闭。
+- [OCI 镜像发布](https://github.com/hu-qi/lark-docs-bot-rs/actions/workflows/publish.yml)：发布到 GHCR。当前发布工作流输出 `linux/amd64`；ARM 宿主机可使用本仓库 Dockerfile 本机编译。
+- [生产发布](https://github.com/hu-qi/lark-docs-bot-rs/actions/workflows/deploy.yml)：手动确认，需部署主机 SSH secrets + 可选 GitHub Environment 保护。**未配置服务器时不会自动上线**。
 
-The `/mcp` POST endpoint now requires a **writer/admin Bearer key even for initialize and tools/list**, validates JSON-RPC 2.0 request IDs and methods, rejects cross-origin browser requests, and marks JSON responses `Cache-Control: no-store`. It returns `MCP-Protocol-Version: 2025-03-26` and HTTP 202 for accepted notifications. Existing write and document allowlist authorization continues to apply to individual tools.
+## 生产部署
 
-This is a **stateless JSON-only HTTP implementation**. It does **not** yet implement resumable SSE, session management, batch JSON-RPC, or all MCP transport negotiation behaviors. Clients must support a JSON-only, stateless HTTP MCP endpoint; some MCP clients may require additional protocol support. Configure your HTTPS reverse proxy to preserve `Host` and reject unexpected origins; do not expose plain HTTP remotely.
+阅读 [deploy/PRODUCTION.md](deploy/PRODUCTION.md)。简要步骤：配置 DNS 和可持久化 Docker Linux 宿主机，将 `deploy/env.production.example` 复制为根目录 `.env.production` 并填写真实秘密；运行 `bash deploy/preflight.sh`；然后 `docker compose --env-file .env.production -f compose.prod.yaml up -d --build`。Caddy 自动申请 HTTPS 证书，应用端口不会公开。定期运行 `bash deploy/backup.sh /absolute/path/to/backups` 并将加密备份异地保存。
 
+生产部署要求：主机防火墙、独立 IP 频率限制或 WAF、监控与报警、离线可恢复备份、集中安全日志和实际 TLS 验收。应用内限流是**单进程、按角色**，不是分布式/按 IP 限流；登记文件也是单实例持久化 JSON，而非多实例数据库。
 
-### Request limits and mutation audit (single instance)
+## 已知限制
 
-The Rust HTTP gateway applies configurable per-minute counters **per API-key role (admin, writer, anonymous)** and request class (read vs non-GET). Defaults: `READ_LIMIT_PER_MINUTE=120`, `WRITE_LIMIT_PER_MINUTE=30`. HTTP 429 is returned when exceeded. This is a coarse **in-memory, per-process** limiter, not per-IP throttling, tenant quotas, or a distributed production abuse-prevention system. Put an independently configured IP-based rate limiter/WAF at the HTTPS reverse proxy, especially for public endpoints. Each mutation records its role, request path and response status through tracing; no document bodies, tokens or keys are intentionally recorded. Logs are not a durable audit ledger and must be shipped to a secure log system for retention. Do not use multiple replicas without centralized state and coordination.
+- 编辑器仍不是与飞书完全等价的复杂富文本编辑器；跨 Run 光标范围、图片/表格/嵌入对象等需转到飞书原生编辑器。
+- 浏览器默认读取最多 10 页（约 1,000 个 Block），超出需额外分页；嵌套 Block 未递归展开。
+- Web 样式预览覆盖常用文字加粗/斜体、标题和列表，不保证飞书完整排版像素级一致。
+- 网关 `public_read` 仅影响本服务，不修改飞书原生分享权限。
+- 实际上线、公开 DNS、服务器健康与生产读写测试需要可访问的容器宿主机及凭证，仓库 CI 成功不等于部署成功。
 
-
-### Structured block creation (Web, REST, MCP)
-
-The Web editor now has a **structured content queue** for paragraphs, headings (H1-H3), unordered and ordered list items, and quotes. Add blocks to the queue and confirm the document before submitting. The server validates a maximum of 50 blocks per request and 2,000 characters per block; each block may optionally use bold and italic styles. Existing blocks are not overwritten. API: `POST /api/docs/{id}/append-structured` (writer/admin Bearer token) with body:
-
-```json
-{"blocks":[{"kind":"heading2","text":"Roadmap"},{"kind":"bullet","text":"Ship the editor","bold":true}]}
-```
-
-MCP exposes `append_structured` with the same `id` and `blocks` fields. This stage supports creating structured blocks, **not lossless rich-text editing of existing blocks**; images, tables and advanced embedded content remain unsupported. Integration with the live Feishu API should be verified before relying on new block types in production.
-
-
-### Optional real structured-content verification
-
-The manual [Feishu API Live Smoke Test](https://github.com/hu-qi/lark-docs-bot-rs/actions/workflows/feishu-smoke.yml) has a `test_structured` checkbox (off by default). When enabled it creates a disposable document, inserts heading, unordered-list, ordered-list and quote blocks, and confirms their text can be read back. It does not touch existing documents. The Rust CI validates serialization and HTTP protocol behavior, but does not replace this live Feishu round-trip.
-
-
-### Editing existing structured blocks (experimental)
-
-The Web editor and REST `PATCH /api/docs/{id}/blocks/{block_id}` now support single-text-run paragraphs, H1-H3 headings, ordered/unordered list entries and quote blocks. Requests may include `expected_text` alongside `text`; if the block's current content no longer matches, the gateway returns HTTP 409 rather than overwriting unexpectedly. MCP `update_text_block` accepts the same optional `expected_text`. The gateway preserves the existing text-run element attributes when replacing its content. Multi-run text, embeds, and other complex document blocks are intentionally not supported. This is a best-effort read-before-write check, not an atomic Feishu compare-and-swap; concurrent writers may still race between the read and update. Use Feishu's native editor for highly concurrent or complex rich-text changes.
-
-The optional live smoke test's `test_structured` mode also verifies updating a freshly created heading and re-reading it. No existing document is modified by the test.
-
-
-### Long-document block pagination
-
-`GET /api/docs/{id}/blocks` supports optional `page_token` forwarding for Feishu's cursor-based pagination (100 blocks per page). The gateway URL-encodes opaque tokens and rejects malformed control characters. The Web editor now follows up to **10 pages / 1,000 blocks**, avoids repeated cursors, and indicates when a document exceeds that limit. This page limit is deliberately bounded to reduce unexpected Feishu API calls. Existing REST/MCP callers can continue consuming pages explicitly; nested child blocks are not recursively expanded in the browser.
-
-
-### Web editor visual preview and quick toolbar
-
-The browser editor now offers a **semantic, read-only rich preview** of supported Feishu text blocks (paragraphs, H1–H3, bullet/numbered lists and blockquotes) alongside the existing raw-text view. Draft content has a live preview and shortcut buttons to choose heading/list/quote types and toggle bold/italic for **new blocks**. Preview text is inserted through DOM `textContent` rather than parsed as HTML, so embedded markup is not executed. Unsupported embedded elements are shown as placeholders, not silently rendered as plain text. Loading a different document invalidates stale refresh responses. Preview is approximate rather than pixel-identical with Feishu, and style fidelity is intentionally limited for mixed-run blocks. CI runs `scripts/web-editor-test.cjs` to check syntax, safe DOM rendering and list grouping.
-
-
-### Multi-run rich text editing (experimental)
-
-`PATCH /api/docs/{id}/blocks/{block_id}/runs` accepts a list of existing text runs, each with `expected_text` and replacement `text`:
-
-```json
-{"runs":[{"expected_text":"Plain ","text":"Updated "},{"expected_text":"bold","text":"strong"}]}
-```
-
-The gateway fetches the current Feishu block, verifies the run count and **every original text value**, then replaces only each run's `content`. Its other attributes (such as bold/italic, links and other text-run properties) remain attached to the same segment. Mixed embeds/mentions/non-text elements and unsupported block types are rejected. A single request can contain at most 100 runs and 20,000 characters of replacement text. MCP provides `update_text_runs` with the same `id`, `block_id`, and `runs` parameters. The Web editor now exposes each run separately and previews individual bold/italic attributes. This does not yet support changing formatting boundaries, text selection across runs or atomic concurrent updates; an external edit can still race between the read and Feishu PATCH. A live multi-run integration smoke should be run before relying on this experimental API with important documents.
-
-
-To verify two-text-run formatting end to end, manually run **Feishu API Live Smoke Test** with `test_multirun=true` (default: false). It creates a new disposable document and a block containing plain and bold runs, updates both without changing the bold attribute, then fetches the block again and checks formatting. It never edits an existing document. This live test has not run just because the regular Rust CI passed.
+**安全提醒**：如应用密钥曾在聊天、截图或日志中泄露，应尽快轮换，并更新私有 CI Secrets 与生产主机配置。
