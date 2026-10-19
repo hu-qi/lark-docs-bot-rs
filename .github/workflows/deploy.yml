@@ -1,0 +1,64 @@
+name: Deploy to production host
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DEPLOY to confirm a production rollout'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: lark-docs-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.event.inputs.confirm == 'DEPLOY'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check required SSH deployment secrets
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          REMOTE_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          for variable in HOST USER KEY KNOWN_HOSTS REMOTE_PATH; do
+            if [ -z "${!variable}" ]; then
+              echo "::error::Missing required deployment secret: ${variable}"
+              exit 1
+            fi
+          done
+      - name: Prepare SSH credentials
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Roll out exact audited commit
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            "$DEPLOY_USER@$DEPLOY_HOST" sh -s -- "$DEPLOY_PATH" "$COMMIT" <<'REMOTE_SCRIPT'
+          set -eu
+          cd "$1"
+          git fetch --prune origin main
+          git cat-file -e "$2^{commit}"
+          git checkout --detach "$2"
+          bash deploy/preflight.sh .env.production
+          bash deploy/backup.sh "$(pwd)/backups"
+          docker compose --env-file .env.production -f compose.prod.yaml up -d --build
+          docker compose --env-file .env.production -f compose.prod.yaml ps
+          REMOTE_SCRIPT
+      - name: Confirm deployment verification scope
+        run: |
+          echo 'Remote deployment command completed. Verify HTTPS /health, the public DNS record and an authorized document read before closing rollout.'
