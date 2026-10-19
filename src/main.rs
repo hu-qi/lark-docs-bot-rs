@@ -576,7 +576,7 @@ mod tests {
         assert!(block_page_path("docx_abc", None).unwrap().contains("page_size=100"));
         assert!(block_page_path("docx_abc", Some("abc-123_")).unwrap().ends_with("page_token=abc-123_"));
         assert!(block_page_path("docx_abc", Some("abc+/=")).unwrap().ends_with("page_token=abc%2B%2F%3D"));
-        assert!(block_page_path("docx_abc", Some("bad\\ntoken")).is_err());
+        assert!(block_page_path("docx_abc", Some("bad\ntoken")).is_err());
         assert!(block_page_path("docx_abc", Some("")).is_err());
     }
     #[test] fn id_validation() {
