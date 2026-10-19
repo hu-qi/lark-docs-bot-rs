@@ -145,6 +145,41 @@ async fn verify() -> Result<(), String> {
         }
         println!("Structured heading/list/quote insert, heading edit and readback verified");
     }
+    if env::var("FEISHU_TEST_MULTIRUN").as_deref() == Ok("true") {
+        let multi = call(&client, Method::POST,
+            &format!("{base}/docx/v1/documents/{id}/blocks/{id}/children"), Some(token),
+            Some(json!({"children":[{"block_type":2,"text":{"elements":[
+                {"text_run":{"content":"Plain "}},
+                {"text_run":{"content":"bold","text_element_style":{"bold":true}}}
+            ]}}]}))).await?;
+        let run_id = multi["children"][0]["block_id"].as_str()
+            .ok_or("Missing multi-run block ID")?;
+        let before = call(&client, Method::GET,
+            &format!("{base}/docx/v1/documents/{id}/blocks/{run_id}"), Some(token), None).await?;
+        let elements = before["block"]["text"]["elements"].as_array()
+            .ok_or("Missing multi-run text elements")?;
+        if elements.len() != 2 || elements[0]["text_run"]["content"] != "Plain "
+            || elements[1]["text_run"]["content"] != "bold" {
+            return Err("Feishu did not preserve the two initial text runs".into());
+        }
+        let mut edited = elements.clone();
+        edited[0]["text_run"]["content"] = json!("Updated ");
+        edited[1]["text_run"]["content"] = json!("strong");
+        call(&client, Method::PATCH,
+            &format!("{base}/docx/v1/documents/{id}/blocks/{run_id}"), Some(token),
+            Some(json!({"update_text_elements":{"elements":edited}}))).await?;
+        let after = call(&client, Method::GET,
+            &format!("{base}/docx/v1/documents/{id}/blocks/{run_id}"), Some(token), None).await?;
+        let updated = after["block"]["text"]["elements"].as_array()
+            .ok_or("Multi-run readback missing elements")?;
+        if updated.len() != 2
+            || updated[0]["text_run"]["content"] != "Updated "
+            || updated[1]["text_run"]["content"] != "strong"
+            || updated[1]["text_run"]["text_element_style"]["bold"] != true {
+            return Err("Multi-run formatting or content did not round-trip".into());
+        }
+        println!("Multi-run formatting-preserving update verified on disposable document");
+    }
     println!("Smoke test succeeded. Document and block IDs: {id} / {block_id}");
     Ok(())
 }
