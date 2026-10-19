@@ -79,7 +79,7 @@ fn apply_bucket(bucket: &mut RateBucket, limit: u32, now: Instant) -> bool {
     true
 }
 async fn security_gate(State(state): State<AppState>, request: Request<Body>, next: Next) -> axum::response::Response {
-    let path = request.uri().path();
+    let path = request.uri().path().to_owned();
     if path == "/health" || path == "/" {
         return next.run(request).await;
     }
