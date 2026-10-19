@@ -89,3 +89,8 @@ Deletion is deliberately not available in the browser UI. This API requires an e
 ```
 
 The gateway queries the same revision, rejects mismatched child IDs and incomplete child pages, and sends the supplied revision to Feishu's `batch_delete` API. Never use `-1` (latest) for deletion. An external concurrent edit may cause Feishu to reject the supplied document revision; do not retry automatically with the latest revision. MCP exposes the same guarded `delete_block` tool. **Deleting is destructive; verify on a disposable document before production use.**
+
+
+### Optional live deletion verification (manual only)
+
+The **Feishu API Live Smoke Test** workflow now has a `test_delete` input, **off by default**. When explicitly enabled, the smoke binary creates a NEW document, appends/updates its test block, reads that document's revision and child order, then deletes only the block it created and verifies readback. It never accepts existing document IDs from workflow inputs. The test document itself is preserved for inspection. Run this only in a tenant where writing a disposable test document is permitted; this is a destructive integration test of the test block, not a production document cleanup operation.
