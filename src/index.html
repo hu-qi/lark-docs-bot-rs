@@ -22,7 +22,7 @@ a{color:#2866bf}@media(max-width:700px){main{grid-template-columns:1fr}}
 <button id="create">创建</button><h2 style="margin-top:26px">文档列表</h2><div id="docs"></div></section>
 <section><h2 id="heading">选择一篇文档</h2><p id="link"></p>
 <label>当前文档内容（只读预览）</label><pre id="preview">从左侧选择文档进行预览。</pre>
-<h2>段落编辑</h2><p class="note">仅支持普通文本块；修改前会检查块类型。其他复杂富文本请在飞书中编辑。</p><div id="paragraphs"></div>
+<h2>段落编辑</h2><p class="note">支持单一文本段落、标题、列表、引用；修改会保留已有文本 Run 样式。复杂富文本仍请在飞书中编辑。</p><div id="paragraphs"></div>
 <h2>结构化内容</h2><p class="note">可创建标题、列表、引用和带基础强调的段落。先预览后提交，不会覆盖现有内容。</p>
 <label for="kind">内容块类型</label><select id="kind"><option value="text">普通段落</option><option value="heading1">一级标题</option><option value="heading2">二级标题</option><option value="heading3">三级标题</option><option value="bullet">无序列表项</option><option value="ordered">有序列表项</option><option value="quote">引用</option></select>
 <label><input id="bold" type="checkbox" style="display:inline;width:auto;margin:0 6px 0 0">加粗</label>
@@ -73,12 +73,14 @@ async function loadParagraphs(docId) {
  const items=Array.isArray(response.items)?response.items:[];
  let count=0;
  for(const block of items){
-  if(block.block_type!==2 || !block.block_id || !Array.isArray(block.text?.elements)) continue;
-  const elements=block.text.elements;
-  if(elements.length!==1 || elements.some(e=>typeof e.text_run?.content!=='string' || e.text_run.text_element_style)) continue;
+  const fields={2:'text',3:'heading1',4:'heading2',5:'heading3',12:'bullet',13:'ordered',15:'quote'};
+  const field=fields[block.block_type];
+  if(!field || !block.block_id || !Array.isArray(block[field]?.elements)) continue;
+  const elements=block[field].elements;
+  if(elements.length!==1 || typeof elements[0].text_run?.content!=='string') continue;
   const original=elements.map(e=>e.text_run.content).join('');
   const wrap=document.createElement('div');wrap.className='block-editor';
-  const caption=document.createElement('label');caption.textContent='文本块 '+(++count);
+  const caption=document.createElement('label');caption.textContent=field+' · 内容块 '+(++count);
   const area=document.createElement('textarea');area.value=original;area.rows=3;area.maxLength=20000;
   const button=document.createElement('button');button.className='secondary';button.textContent='保存该段落';
   button.onclick=async()=>{
@@ -86,7 +88,7 @@ async function loadParagraphs(docId) {
    if(area.value===original)return status('内容没有变化');
    if(!confirm('确认覆盖此文本块的现有内容？'))return;
    button.disabled=true;
-   try {await api('/api/docs/'+encodeURIComponent(docId)+'/blocks/'+encodeURIComponent(block.block_id),'PATCH',{text:area.value});
+   try {await api('/api/docs/'+encodeURIComponent(docId)+'/blocks/'+encodeURIComponent(block.block_id),'PATCH',{text:area.value,expected_text:original});
     await refresh();status('段落修改成功');}catch(e){status('保存失败：'+e.message);}
    finally {button.disabled=false;}
   };
