@@ -35,6 +35,8 @@ status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $WRIT
 test "$status" = 405
 response=$(curl -fsS -H "Authorization: Bearer $ADMIN_API_KEY" -H 'Accept: application/json, text/event-stream' -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":17,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' "$base")
 python3 -c 'import sys,json; x=json.load(sys.stdin); assert x["result"]["protocolVersion"]=="2025-06-18"' <<< "$response"
+response=$(curl -fsS -H "Authorization: Bearer $ADMIN_API_KEY" -H 'Accept: application/json, text/event-stream' -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":20,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' "$base")
+python3 -c 'import sys,json; x=json.load(sys.stdin); assert x["result"]["protocolVersion"]=="2025-11-25"' <<< "$response"
 status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $ADMIN_API_KEY" -H 'MCP-Protocol-Version: 2099-01-01' -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":18,"method":"ping"}' "$base")
 test "$status" = 400
 status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $ADMIN_API_KEY" -H 'Accept: application/json' -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":19,"method":"ping"}' "$base")
