@@ -72,7 +72,10 @@ jobs:
             sleep 20
           done
           echo "APP_IMAGE=$image" >> "$GITHUB_ENV"
-          docker save "$image" | gzip -1 > "$RUNNER_TEMP/lark-image.tar.gz"
+          # Ship all runtime images so the ECS need not reach GHCR or Docker Hub.
+          docker pull caddy:2-alpine
+          docker pull alpine:3.20
+          docker save "$image" caddy:2-alpine alpine:3.20 | gzip -1 > "$RUNNER_TEMP/lark-image.tar.gz"
           sha256sum "$RUNNER_TEMP/lark-image.tar.gz"
       - name: Upload source archive to ECS (no server GitHub access required)
         env:
