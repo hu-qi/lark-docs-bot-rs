@@ -13,6 +13,13 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Export Cargo.lock for initial commit
+        run: |
+          cargo generate-lockfile
+          echo "CARGO_LOCK_BEGIN"
+          base64 -w0 Cargo.lock
+          echo
+          echo "CARGO_LOCK_END"
       - run: cargo fmt --all
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all
