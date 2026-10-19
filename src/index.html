@@ -8,6 +8,16 @@ section{border:1px solid #dce4ef;background:white;border-radius:12px;padding:20p
 input,textarea,button,select{font:inherit}input,textarea,select{display:block;border:1px solid #c7d3e1;border-radius:8px;width:100%;padding:10px;margin:7px 0 14px}
 button{background:#2365cc;color:white;border:none;border-radius:8px;padding:10px 14px;cursor:pointer}
 button.secondary{background:#e9eff9;color:#233b5d}button:disabled{opacity:.55}button+button{margin-left:6px}
+.editor-toolbar{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.editor-toolbar button{padding:6px 10px}
+.rich-preview{padding:14px;border:1px solid #dce4ef;border-radius:9px;background:white;overflow-wrap:anywhere}
+.rich-preview h1{font-size:1.6em}.rich-preview h2{font-size:1.3em}.rich-preview h3{font-size:1.1em}
+.rich-preview h1,.rich-preview h2,.rich-preview h3,.rich-preview p{margin:0 0 8px}
+.rich-preview blockquote{border-left:4px solid #96aeda;padding-left:12px;margin:5px 0;color:#3e536f}
+.rich-preview ul,.rich-preview ol{padding-left:23px;margin:4px 0}
+.rich-preview .empty{color:#738299;font-style:italic}
+.block-editor details{margin-top:10px}.block-editor summary{cursor:pointer;color:#245bad;font-size:13px}
+#visualBlocks{max-height:440px;overflow:auto}.block-editor .rich-preview{margin:8px 0}
+
 h2{font-size:17px;margin:0 0 16px}.note{font-size:12px;color:#62748f;line-height:1.5}
 .block-editor{border:1px solid #d9e3ef;border-radius:10px;padding:12px;margin:9px 0;background:#fbfdff}.block-editor textarea{margin:8px 0;min-height:64px}.block-editor .secondary{font-size:12px;padding:7px 12px}.doc{width:100%;background:#eef4fd;text-align:left;color:#1c3558;margin:0 0 7px;white-space:normal}
 pre{white-space:pre-wrap;word-break:break-word;background:#f5f8fc;padding:15px;border-radius:8px;min-height:100px}
@@ -22,12 +32,14 @@ a{color:#2866bf}@media(max-width:700px){main{grid-template-columns:1fr}}
 <button id="create">创建</button><h2 style="margin-top:26px">文档列表</h2><div id="docs"></div></section>
 <section><h2 id="heading">选择一篇文档</h2><p id="link"></p>
 <label>当前文档内容（只读预览）</label><pre id="preview">从左侧选择文档进行预览。</pre>
-<h2>段落编辑</h2><p class="note">支持单一文本段落、标题、列表、引用；修改会保留已有文本 Run 样式。复杂富文本仍请在飞书中编辑。</p><div id="paragraphs"></div>
+<h2>可视化文档预览</h2><p class="note">以结构化 Block 渲染可支持的内容，不执行文档内的 HTML 或脚本；复杂嵌入内容请在飞书中查看。</p><div id="visualBlocks" class="rich-preview" aria-live="polite"></div><h2>段落编辑</h2><p class="note">支持单一文本段落、标题、列表、引用；修改会保留已有文本 Run 样式。复杂富文本仍请在飞书中编辑。</p><div id="paragraphs"></div>
 <h2>结构化内容</h2><p class="note">可创建标题、列表、引用和带基础强调的段落。先预览后提交，不会覆盖现有内容。</p>
 <label for="kind">内容块类型</label><select id="kind"><option value="text">普通段落</option><option value="heading1">一级标题</option><option value="heading2">二级标题</option><option value="heading3">三级标题</option><option value="bullet">无序列表项</option><option value="ordered">有序列表项</option><option value="quote">引用</option></select>
 <label><input id="bold" type="checkbox" style="display:inline;width:auto;margin:0 6px 0 0">加粗</label>
 <label><input id="italic" type="checkbox" style="display:inline;width:auto;margin:0 6px 0 0">斜体</label>
 <textarea id="structuredText" rows="4" maxlength="2000" placeholder="输入结构化内容（每次添加一个块）"></textarea>
+<div class="editor-toolbar"><button type="button" class="secondary" id="useH1">H1</button><button type="button" class="secondary" id="useH2">H2</button><button type="button" class="secondary" id="useBullet">• 列表</button><button type="button" class="secondary" id="useQuote">❝ 引用</button><button type="button" class="secondary" id="useBold">B 加粗</button><button type="button" class="secondary" id="useItalic">I 斜体</button></div>
+<label>提交前预览</label><div id="draftPreview" class="rich-preview" aria-live="polite"></div>
 <button id="queueBlock" class="secondary">加入待提交列表</button><div id="queuedBlocks" class="note"></div>
 <button id="submitBlocks" disabled>提交结构化内容到飞书</button><button id="clearBlocks" class="secondary">清空列表</button><h2>追加内容</h2><p class="note">本版本采用安全的追加编辑模式，不会整篇覆盖飞书已有内容。</p>
 <textarea rows="10" id="text" placeholder="输入要追加到文档末尾的内容，支持换行"></textarea>
@@ -48,6 +60,28 @@ async function api(path, method='GET', body) {
  if(!r.ok) throw Error(data.error||'HTTP '+r.status);
  return data;
 }
+const blockFields={2:'text',3:'heading1',4:'heading2',5:'heading3',12:'bullet',13:'ordered',15:'quote'};
+function renderRichBlock(root,kind,content,style={}){
+ const tags={text:'p',heading1:'h1',heading2:'h2',heading3:'h3',bullet:'li',ordered:'li',quote:'blockquote'};
+ const tag=tags[kind];if(!tag)return;
+ let element=document.createElement(tag);
+ let target=element;
+ if(style.bold){const bold=document.createElement('strong');target.append(bold);target=bold}
+ if(style.italic){const italic=document.createElement('em');target.append(italic);target=italic}
+ target.textContent=content;
+ if(kind==='bullet'||kind==='ordered'){
+  const listTag=kind==='bullet'?'ul':'ol';
+  let list=root.lastElementChild;
+  if(!list||list.tagName.toLowerCase()!==listTag){list=document.createElement(listTag);root.append(list)}
+  list.append(element);
+ }else root.append(element);
+}
+function renderDraft(){
+ const root=$('draftPreview');root.replaceChildren();
+ const text=$('structuredText').value;
+ if(!text){const empty=document.createElement('span');empty.className='empty';empty.textContent='输入内容后可在这里预览';root.append(empty);return}
+ renderRichBlock(root,$('kind').value,text,{bold:$('bold').checked,italic:$('italic').checked});
+}
 const status=msg=>$('status').textContent=msg;
 async function list() {
  try { const result=await api('/api/docs');$('docs').replaceChildren();
@@ -61,19 +95,25 @@ async function selectDoc(doc) {
  const a=document.createElement('a');a.href=doc.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent='在飞书中打开 ↗';$('link').replaceChildren(a);
  renderQueued();await refresh();
 }
+let refreshSequence=0;
 async function refresh() {
  if(!current)return;
- try{const data=await api('/api/docs/'+encodeURIComponent(current.id));
+ const docId=current.id, seq=++refreshSequence;
+ try{const data=await api('/api/docs/'+encodeURIComponent(docId));
+ if(seq!==refreshSequence||current?.id!==docId)return;
  $('preview').textContent=data.content||'(空文档)';
- await loadParagraphs(current.id);status('已从飞书同步');}catch(e){status(e.message);}
+ await loadParagraphs(docId,seq);
+ if(seq===refreshSequence&&current?.id===docId)status('已从飞书同步');
+ }catch(e){if(seq===refreshSequence&&current?.id===docId)status(e.message)}
 }
-async function loadParagraphs(docId) {
- const root=$('paragraphs'); root.replaceChildren();
+async function loadParagraphs(docId,seq=refreshSequence) {
+ const root=$('paragraphs');root.replaceChildren();
+ const visual=$('visualBlocks');visual.replaceChildren();
  const items=[];
  let cursor='', more=true, pages=0;
  const seen=new Set();
  while(more && pages<10){
-  if(!current || current.id!==docId)return;
+  if(seq!==refreshSequence||!current || current.id!==docId)return;
   const path='/api/docs/'+encodeURIComponent(docId)+'/blocks'+(cursor?'?page_token='+encodeURIComponent(cursor):'');
   const response=await api(path);
   if(Array.isArray(response.items))items.push(...response.items);
@@ -86,11 +126,23 @@ async function loadParagraphs(docId) {
    seen.add(response.page_token);cursor=response.page_token;
   }
  }
- if(!current||current.id!==docId)return;
+ if(seq!==refreshSequence||!current||current.id!==docId)return;
  let count=0;
  for(const block of items){
-  const fields={2:'text',3:'heading1',4:'heading2',5:'heading3',12:'bullet',13:'ordered',15:'quote'};
-  const field=fields[block.block_type];
+  const field=blockFields[block.block_type];
+  if(field&&Array.isArray(block[field]?.elements)){
+   const runs=block[field].elements;
+   const plain=runs.every(e=>typeof e.text_run?.content==='string');
+   if(plain){
+    const text=runs.map(e=>e.text_run.content).join('');
+    const styles=runs.length===1?(runs[0].text_run.text_element_style||{}):{};
+    renderRichBlock(visual,field,text,styles);
+   } else {
+    const note=document.createElement('p');note.className='empty';
+    note.textContent='[此内容包含不支持的嵌入元素]';visual.append(note);
+   }
+  }
+
   if(!field || !block.block_id || !Array.isArray(block[field]?.elements)) continue;
   const elements=block[field].elements;
   if(elements.length!==1 || typeof elements[0].text_run?.content!=='string') continue;
@@ -112,6 +164,7 @@ async function loadParagraphs(docId) {
  }
  if(more){const note=document.createElement('p');note.className='note';note.textContent='仅显示前 '+pages+' 页内容，超出范围请在飞书中查看。';root.prepend(note)}
  if(count===0)root.textContent='当前没有可编辑的单 Run 文本块。';
+ if(!visual.hasChildNodes())visual.textContent='没有可预览的支持内容。';
 }
 const queued=[];
 function renderQueued(){
@@ -125,10 +178,19 @@ function renderQueued(){
  }
  $('submitBlocks').disabled=!current||queued.length===0;
 }
+for(const id of ['kind','bold','italic','structuredText']){
+ $(id).addEventListener(id==='structuredText'?'input':'change',renderDraft);
+}
+for(const [id,kind] of Object.entries({useH1:'heading1',useH2:'heading2',useBullet:'bullet',useQuote:'quote'})){
+ $(id).onclick=()=>{$('kind').value=kind;renderDraft();$('structuredText').focus()};
+}
+$('useBold').onclick=()=>{$('bold').checked=!$('bold').checked;renderDraft()};
+$('useItalic').onclick=()=>{$('italic').checked=!$('italic').checked;renderDraft()};
+renderDraft();
 $('queueBlock').onclick=()=>{
  const text=$('structuredText').value.trim();if(!text)return status('请输入内容');
  queued.push({kind:$('kind').value,text,bold:$('bold').checked,italic:$('italic').checked});
- $('structuredText').value='';renderQueued();status('已加入待提交列表');
+ $('structuredText').value='';renderDraft();renderQueued();status('已加入待提交列表');
 };
 $('clearBlocks').onclick=()=>{queued.length=0;renderQueued()};
 $('submitBlocks').onclick=async()=>{
