@@ -132,7 +132,18 @@ async fn verify() -> Result<(), String> {
         for expected in ["Smoke Heading","Smoke bullet item","Smoke ordered item","Smoke quote"] {
             if !content.contains(expected) { return Err("Structured block readback mismatch".into()); }
         }
-        println!("Structured heading/list/quote insert and readback verified");
+        let heading_id = structured["children"][0]["block_id"].as_str()
+            .ok_or("Missing structured heading block_id")?;
+        let updated_heading = "Smoke Heading Updated";
+        call(&client, Method::PATCH,
+            &format!("{base}/docx/v1/documents/{id}/blocks/{heading_id}"), Some(token),
+            Some(json!({"update_text_elements":{"elements":[{"text_run":{"content":updated_heading}}]}}))).await?;
+        let after_update = call(&client, Method::GET,
+            &format!("{base}/docx/v1/documents/{id}/raw_content"), Some(token), None).await?;
+        if !after_update["content"].as_str().unwrap_or("").contains(updated_heading) {
+            return Err("Structured heading update did not round-trip".into());
+        }
+        println!("Structured heading/list/quote insert, heading edit and readback verified");
     }
     println!("Smoke test succeeded. Document and block IDs: {id} / {block_id}");
     Ok(())
