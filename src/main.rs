@@ -45,6 +45,10 @@ struct CreateDoc { title: String }
 #[derive(Deserialize)]
 struct AppendText { text: String }
 #[derive(Deserialize)]
+struct AppendStructured { blocks: Vec<StructuredBlock> }
+#[derive(Deserialize)]
+struct StructuredBlock { kind: String, text: String, bold: Option<bool>, italic: Option<bool> }
+#[derive(Deserialize)]
 struct ReplaceBlock { text: String }
 #[derive(Deserialize)]
 struct DeleteBlockRequest { parent_id: String, block_id: String, index: usize, document_revision_id: i64 }
@@ -177,6 +181,39 @@ async fn create_internal(state: &AppState, title: &str) -> ApiResult<Value> {
     saved(state).await?;
     Ok(json!({"id":id,"title":title,"url":doc_url(&state.config,&id),"public_read":false}))
 }
+fn encode_structured_blocks(blocks: &[StructuredBlock]) -> ApiResult<Vec<Value>> {
+    if blocks.is_empty() || blocks.len() > 50 {
+        return Err(problem(StatusCode::BAD_REQUEST, "Provide 1-50 structured blocks"));
+    }
+    let mut result = Vec::with_capacity(blocks.len());
+    for block in blocks {
+        if block.text.is_empty() || block.text.chars().count() > 2000 {
+            return Err(problem(StatusCode::BAD_REQUEST, "Structured block text must contain 1-2000 characters"));
+        }
+        let (block_type, field) = match block.kind.as_str() {
+            "text" => (2, "text"),
+            "heading1" => (3, "heading1"),
+            "heading2" => (4, "heading2"),
+            "heading3" => (5, "heading3"),
+            "bullet" => (12, "bullet"),
+            "ordered" => (13, "ordered"),
+            "quote" => (15, "quote"),
+            _ => return Err(problem(StatusCode::BAD_REQUEST, "Unsupported structured block type")),
+        };
+        let mut run = json!({"content":block.text});
+        if block.bold == Some(true) || block.italic == Some(true) {
+            run["text_element_style"] = json!({"bold":block.bold.unwrap_or(false),"italic":block.italic.unwrap_or(false)});
+        }
+        let mut value = json!({"block_type":block_type});
+        value[field] = json!({"elements":[{"text_run":run}]});
+        result.push(value);
+    }
+    Ok(result)
+}
+async fn append_structured_internal(state: &AppState, id: &str, blocks: &[StructuredBlock]) -> ApiResult<Value> {
+    let children = encode_structured_blocks(blocks)?;
+    lark(state, reqwest::Method::POST, &format!("/docx/v1/documents/{id}/blocks/{id}/children"), Some(json!({"children":children}))).await
+}
 async fn append_internal(state: &AppState, id: &str, text: &str) -> ApiResult<Value> {
     if text.is_empty() || text.chars().count() > 20000 || text.split('\n').count() > 50 {
         return Err(problem(StatusCode::BAD_REQUEST, "Text must contain 1-20000 characters and at most 50 paragraphs"));
@@ -224,6 +261,10 @@ async fn get_children(State(s): State<AppState>, headers: HeaderMap, Path((id,pa
 async fn append(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<String>, Json(req): Json<AppendText>) -> ApiResult<Json<Value>> {
     allowed(&s, &headers, &id, true).await?;
     Ok(Json(append_internal(&s, &id, &req.text).await?))
+}
+async fn append_structured(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<String>, Json(req): Json<AppendStructured>) -> ApiResult<Json<Value>> {
+    allowed(&s, &headers, &id, true).await?;
+    Ok(Json(append_structured_internal(&s, &id, &req.blocks).await?))
 }
 async fn replace_block_internal(s: &AppState, id: &str, block_id: &str, text: &str) -> ApiResult<Value> {
     if !valid_id(block_id) || block_id == id {
@@ -356,6 +397,7 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap, Json(message): Json<
             {"name":"read_document","description":"Read registered document text","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}},
             {"name":"list_blocks","description":"List first page of registered document blocks","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}},
             {"name":"append_text","description":"Append text to a registered document","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"]}},
+            {"name":"append_structured","description":"Append validated headings, paragraphs, lists or quotes to a registered document","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"blocks":{"type":"array","minItems":1,"maxItems":50,"items":{"type":"object","properties":{"kind":{"type":"string","enum":["text","heading1","heading2","heading3","bullet","ordered","quote"]},"text":{"type":"string"},"bold":{"type":"boolean"},"italic":{"type":"boolean"}},"required":["kind","text"]}}},"required":["id","blocks"]}},
             {"name":"update_text_block","description":"Replace a single unstyled plain-text block in a registered document; refuses rich or mixed elements","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"block_id":{"type":"string"},"text":{"type":"string"}},"required":["id","block_id","text"]}},
             {"name":"delete_block","description":"Delete a verified child block at an explicit Feishu document revision and index; requires writer key","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"parent_id":{"type":"string"},"block_id":{"type":"string"},"index":{"type":"integer","minimum":0},"document_revision_id":{"type":"integer","minimum":0}},"required":["id","parent_id","block_id","index","document_revision_id"]}}
         ]})),
@@ -387,6 +429,13 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap, Json(message): Json<
                         let doc_id = args["id"].as_str().unwrap_or("");
                         allowed(&s, &headers, doc_id, true).await?;
                         append_internal(&s, doc_id, args["text"].as_str().unwrap_or("")).await
+                    }
+                    "append_structured" => {
+                        let doc_id = args["id"].as_str().unwrap_or("");
+                        allowed(&s, &headers, doc_id, true).await?;
+                        let params: AppendStructured = serde_json::from_value(args.clone()).map_err(|_|
+                            problem(StatusCode::BAD_REQUEST, "Invalid append_structured arguments"))?;
+                        append_structured_internal(&s, doc_id, &params.blocks).await
                     }
                     "update_text_block" => {
                         let doc_id = args["id"].as_str().unwrap_or("");
@@ -456,6 +505,7 @@ async fn main() {
         .route("/api/docs/{id}/metadata", get(get_document_metadata))
         .route("/api/docs/{id}/blocks/{parent_id}/children", get(get_children))
         .route("/api/docs/{id}/append", post(append))
+        .route("/api/docs/{id}/append-structured", post(append_structured))
         .route("/api/docs/{id}/blocks/{block_id}", axum::routing::patch(replace_block))
         .route("/api/docs/{id}/blocks/delete", post(delete_block))
         .route("/api/docs/{id}/access", post(set_access))
@@ -479,6 +529,14 @@ mod tests {
         assert!(!apply_bucket(&mut bucket, 2, now));
         assert!(apply_bucket(&mut bucket, 2, now + Duration::from_secs(61)));
         assert_eq!(bucket.count, 1);
+    }
+    #[test] fn structured_block_encoder() {
+        let blocks = vec![StructuredBlock { kind: "heading2".into(), text: "Release notes".into(), bold: Some(true), italic: None }];
+        let encoded = encode_structured_blocks(&blocks).unwrap();
+        assert_eq!(encoded[0]["block_type"], 4);
+        assert_eq!(encoded[0]["heading2"]["elements"][0]["text_run"]["text_element_style"]["bold"], true);
+        assert!(encode_structured_blocks(&[StructuredBlock { kind: "image".into(), text: "not supported".into(), bold: None, italic: None }]).is_err());
+        assert!(encode_structured_blocks(&[]).is_err());
     }
     #[test] fn id_validation() {
         assert!(valid_id("docx_abc-123"));
