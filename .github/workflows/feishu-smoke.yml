@@ -2,6 +2,12 @@ name: Feishu API Live Smoke Test
 
 on:
   workflow_dispatch:
+    inputs:
+      test_delete:
+        description: 'Delete one text block in a newly created disposable test document'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -27,8 +33,9 @@ jobs:
             echo "::error::Configure repository secrets APPID and APPSECRET first"
             exit 1
           fi
-      - name: Test Feishu authentication, document creation and readback
+      - name: Test Feishu document CRUD on disposable document
         env:
           LARK_APP_ID: ${{ secrets.APPID }}
           LARK_APP_SECRET: ${{ secrets.APPSECRET }}
+          FEISHU_TEST_DELETE: ${{ inputs.test_delete }}
         run: cargo run --bin feishu-smoke
