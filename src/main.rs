@@ -49,7 +49,7 @@ struct AppendStructured { blocks: Vec<StructuredBlock> }
 #[derive(Deserialize)]
 struct StructuredBlock { kind: String, text: String, bold: Option<bool>, italic: Option<bool> }
 #[derive(Deserialize)]
-struct ReplaceBlock { text: String }
+struct ReplaceBlock { text: String, expected_text: Option<String> }
 #[derive(Deserialize)]
 struct DeleteBlockRequest { parent_id: String, block_id: String, index: usize, document_revision_id: i64 }
 #[derive(Deserialize)]
@@ -266,36 +266,43 @@ async fn append_structured(State(s): State<AppState>, headers: HeaderMap, Path(i
     allowed(&s, &headers, &id, true).await?;
     Ok(Json(append_structured_internal(&s, &id, &req.blocks).await?))
 }
-async fn replace_block_internal(s: &AppState, id: &str, block_id: &str, text: &str) -> ApiResult<Value> {
+fn editable_text_run(block: &Value) -> ApiResult<Value> {
+    let field = match block["block_type"].as_i64() {
+        Some(2) => "text",
+        Some(3) => "heading1", Some(4) => "heading2", Some(5) => "heading3",
+        Some(12) => "bullet", Some(13) => "ordered", Some(15) => "quote",
+        _ => return Err(problem(StatusCode::BAD_REQUEST, "Unsupported block type for text editing")),
+    };
+    let elements = block[field]["elements"].as_array()
+        .ok_or_else(|| problem(StatusCode::BAD_REQUEST, "Block has no editable text elements"))?;
+    if elements.len() != 1 || elements[0]["text_run"]["content"].as_str().is_none() {
+        return Err(problem(StatusCode::BAD_REQUEST, "Only a single text run can be safely edited"));
+    }
+    Ok(elements[0].clone())
+}
+async fn replace_block_internal(s: &AppState, id: &str, block_id: &str, text: &str, expected_text: Option<&str>) -> ApiResult<Value> {
     if !valid_id(block_id) || block_id == id {
         return Err(problem(StatusCode::BAD_REQUEST, "Invalid editable block ID"));
     }
     if text.chars().count() > 20000 {
         return Err(problem(StatusCode::BAD_REQUEST, "Block text exceeds 20000 characters"));
     }
-    // Limit modification to plain text blocks. Do not silently overwrite
-    // embedded images, mentions, tables or unsupported rich content.
     let block = lark(s, reqwest::Method::GET, &format!("/docx/v1/documents/{id}/blocks/{block_id}"), None).await?;
-    let block_data = &block["block"];
-    if block_data["block_type"].as_i64() != Some(2) {
-        return Err(problem(StatusCode::BAD_REQUEST, "Only plain text blocks can be edited"));
+    let mut run = editable_text_run(&block["block"])?;
+    let previous = run["text_run"]["content"].as_str().unwrap_or("");
+    if let Some(expected) = expected_text {
+        if previous != expected {
+            return Err(problem(StatusCode::CONFLICT, "Block content changed; reload before saving"));
+        }
     }
-    let elements = block_data["text"]["elements"].as_array()
-        .ok_or_else(|| problem(StatusCode::BAD_REQUEST, "Block has unsupported content"))?;
-    if elements.len() != 1 || elements.iter().any(|element| {
-        element.get("text_run").is_none()
-            || element["text_run"].get("text_element_style").is_some()
-    }) {
-        return Err(problem(StatusCode::BAD_REQUEST, "Refusing to overwrite styled or mixed rich text content"));
-    }
-    let data = lark(s, reqwest::Method::PATCH, &format!("/docx/v1/documents/{id}/blocks/{block_id}"),
-        Some(json!({"update_text_elements":{"elements":[{"text_run":{"content":text}}]}}))).await?;
-
-    Ok(data)
+    run["text_run"]["content"] = json!(text);
+    // Reuse the original single run to retain its style and link attributes.
+    lark(s, reqwest::Method::PATCH, &format!("/docx/v1/documents/{id}/blocks/{block_id}"),
+        Some(json!({"update_text_elements":{"elements":[run]}}))).await
 }
 async fn replace_block(State(s): State<AppState>, headers: HeaderMap, Path((id, block_id)): Path<(String, String)>, Json(req): Json<ReplaceBlock>) -> ApiResult<Json<Value>> {
     allowed(&s, &headers, &id, true).await?;
-    Ok(Json(replace_block_internal(&s, &id, &block_id, &req.text).await?))
+    Ok(Json(replace_block_internal(&s, &id, &block_id, &req.text, req.expected_text.as_deref()).await?))
 }
 fn verify_delete_candidate(items: &[Value], index: usize, block_id: &str) -> ApiResult<()> {
     let current = items.get(index).and_then(|block| block["block_id"].as_str());
@@ -398,7 +405,7 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap, Json(message): Json<
             {"name":"list_blocks","description":"List first page of registered document blocks","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}},
             {"name":"append_text","description":"Append text to a registered document","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"]}},
             {"name":"append_structured","description":"Append validated headings, paragraphs, lists or quotes to a registered document","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"blocks":{"type":"array","minItems":1,"maxItems":50,"items":{"type":"object","properties":{"kind":{"type":"string","enum":["text","heading1","heading2","heading3","bullet","ordered","quote"]},"text":{"type":"string"},"bold":{"type":"boolean"},"italic":{"type":"boolean"}},"required":["kind","text"]}}},"required":["id","blocks"]}},
-            {"name":"update_text_block","description":"Replace a single unstyled plain-text block in a registered document; refuses rich or mixed elements","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"block_id":{"type":"string"},"text":{"type":"string"}},"required":["id","block_id","text"]}},
+            {"name":"update_text_block","description":"Replace a single unstyled plain-text block in a registered document; refuses rich or mixed elements","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"block_id":{"type":"string"},"text":{"type":"string"},"expected_text":{"type":"string"}},"required":["id","block_id","text"]}},
             {"name":"delete_block","description":"Delete a verified child block at an explicit Feishu document revision and index; requires writer key","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"parent_id":{"type":"string"},"block_id":{"type":"string"},"index":{"type":"integer","minimum":0},"document_revision_id":{"type":"integer","minimum":0}},"required":["id","parent_id","block_id","index","document_revision_id"]}}
         ]})),
         "tools/call" => {
@@ -442,7 +449,7 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap, Json(message): Json<
                         let block_id = args["block_id"].as_str().unwrap_or("");
                         let text = args["text"].as_str().ok_or_else(|| problem(StatusCode::BAD_REQUEST, "Missing text"))?;
                         allowed(&s, &headers, doc_id, true).await?;
-                        replace_block_internal(&s, doc_id, block_id, text).await
+                        replace_block_internal(&s, doc_id, block_id, text, args["expected_text"].as_str()).await
                     }
                     "delete_block" => {
                         let doc_id = args["id"].as_str().unwrap_or("");
@@ -529,6 +536,13 @@ mod tests {
         assert!(!apply_bucket(&mut bucket, 2, now));
         assert!(apply_bucket(&mut bucket, 2, now + Duration::from_secs(61)));
         assert_eq!(bucket.count, 1);
+    }
+    #[test] fn editable_text_run_preserves_style_and_refuses_mixed_elements() {
+        let element = json!({"text_run":{"content":"Hello","text_element_style":{"bold":true}}});
+        let block = json!({"block_type":3,"heading1":{"elements":[element.clone()]}});
+        assert_eq!(editable_text_run(&block).unwrap(), element);
+        assert!(editable_text_run(&json!({"block_type":3,"heading1":{"elements":[element.clone(),element]}})).is_err());
+        assert!(editable_text_run(&json!({"block_type":27})).is_err());
     }
     #[test] fn structured_block_encoder() {
         let blocks = vec![StructuredBlock { kind: "heading2".into(), text: "Release notes".into(), bold: Some(true), italic: None }];
