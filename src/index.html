@@ -5,7 +5,7 @@
 *{box-sizing:border-box}body{margin:0}header{background:#152c50;color:white;padding:18px max(24px,calc((100vw - 1100px)/2))}header h1{margin:0;font-size:22px}
 header small{color:#b9c8e3}main{max-width:1100px;margin:24px auto;display:grid;grid-template-columns:300px 1fr;gap:20px;padding:0 18px}
 section{border:1px solid #dce4ef;background:white;border-radius:12px;padding:20px;min-width:0}
-input,textarea,button{font:inherit}input,textarea{display:block;border:1px solid #c7d3e1;border-radius:8px;width:100%;padding:10px;margin:7px 0 14px}
+input,textarea,button,select{font:inherit}input,textarea,select{display:block;border:1px solid #c7d3e1;border-radius:8px;width:100%;padding:10px;margin:7px 0 14px}
 button{background:#2365cc;color:white;border:none;border-radius:8px;padding:10px 14px;cursor:pointer}
 button.secondary{background:#e9eff9;color:#233b5d}button:disabled{opacity:.55}button+button{margin-left:6px}
 h2{font-size:17px;margin:0 0 16px}.note{font-size:12px;color:#62748f;line-height:1.5}
@@ -23,7 +23,13 @@ a{color:#2866bf}@media(max-width:700px){main{grid-template-columns:1fr}}
 <section><h2 id="heading">选择一篇文档</h2><p id="link"></p>
 <label>当前文档内容（只读预览）</label><pre id="preview">从左侧选择文档进行预览。</pre>
 <h2>段落编辑</h2><p class="note">仅支持普通文本块；修改前会检查块类型。其他复杂富文本请在飞书中编辑。</p><div id="paragraphs"></div>
-<h2>追加内容</h2><p class="note">本版本采用安全的追加编辑模式，不会整篇覆盖飞书已有内容。</p>
+<h2>结构化内容</h2><p class="note">可创建标题、列表、引用和带基础强调的段落。先预览后提交，不会覆盖现有内容。</p>
+<label for="kind">内容块类型</label><select id="kind"><option value="text">普通段落</option><option value="heading1">一级标题</option><option value="heading2">二级标题</option><option value="heading3">三级标题</option><option value="bullet">无序列表项</option><option value="ordered">有序列表项</option><option value="quote">引用</option></select>
+<label><input id="bold" type="checkbox" style="display:inline;width:auto;margin:0 6px 0 0">加粗</label>
+<label><input id="italic" type="checkbox" style="display:inline;width:auto;margin:0 6px 0 0">斜体</label>
+<textarea id="structuredText" rows="4" maxlength="2000" placeholder="输入结构化内容（每次添加一个块）"></textarea>
+<button id="queueBlock" class="secondary">加入待提交列表</button><div id="queuedBlocks" class="note"></div>
+<button id="submitBlocks" disabled>提交结构化内容到飞书</button><button id="clearBlocks" class="secondary">清空列表</button><h2>追加内容</h2><p class="note">本版本采用安全的追加编辑模式，不会整篇覆盖飞书已有内容。</p>
 <textarea rows="10" id="text" placeholder="输入要追加到文档末尾的内容，支持换行"></textarea>
 <button id="append" disabled>追加并同步到飞书</button><button class="secondary" id="refresh" disabled>刷新预览</button>
 <div id="adminControls" hidden><h2 style="margin-top:24px">管理员访问控制</h2><label><input id="public" style="display:inline;width:auto;margin:0" type="checkbox">允许匿名通过本服务读取此文档</label><p class="note">此选项仅影响网关 API，不改变飞书原生的文档分享权限。</p><button id="saveAccess" class="secondary">保存访问控制</button></div>
@@ -53,7 +59,7 @@ async function selectDoc(doc) {
  current=doc;$('heading').textContent=doc.title;$('append').disabled=false;$('refresh').disabled=false;
  $('public').checked=doc.public_read;$('adminControls').hidden=false;
  const a=document.createElement('a');a.href=doc.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent='在飞书中打开 ↗';$('link').replaceChildren(a);
- await refresh();
+ renderQueued();await refresh();
 }
 async function refresh() {
  if(!current)return;
@@ -88,6 +94,34 @@ async function loadParagraphs(docId) {
  }
  if(count===0)root.textContent='当前没有可编辑的普通文本段落。';
 }
+const queued=[];
+function renderQueued(){
+ const root=$('queuedBlocks');root.replaceChildren();
+ for(let i=0;i<queued.length;i++){
+  const item=queued[i];const div=document.createElement('div');div.className='block-editor';
+  const label=document.createElement('span');label.textContent=(i+1)+'. '+item.kind+'：'+item.text;
+  const remove=document.createElement('button');remove.className='secondary';remove.textContent='移除';
+  remove.onclick=()=>{queued.splice(i,1);renderQueued()};
+  div.append(label,remove);root.append(div);
+ }
+ $('submitBlocks').disabled=!current||queued.length===0;
+}
+$('queueBlock').onclick=()=>{
+ const text=$('structuredText').value.trim();if(!text)return status('请输入内容');
+ queued.push({kind:$('kind').value,text,bold:$('bold').checked,italic:$('italic').checked});
+ $('structuredText').value='';renderQueued();status('已加入待提交列表');
+};
+$('clearBlocks').onclick=()=>{queued.length=0;renderQueued()};
+$('submitBlocks').onclick=async()=>{
+ if(!current||!queued.length)return;
+ const docId=current.id;const blocks=queued.map(b=>({...b}));
+ if(!confirm('向当前飞书文档追加 '+blocks.length+' 个内容块？'))return;
+ $('submitBlocks').disabled=true;
+ try{
+  await api('/api/docs/'+encodeURIComponent(docId)+'/append-structured','POST',{blocks});
+  queued.length=0;renderQueued();await refresh();status('结构化内容已提交');
+ }catch(e){status('提交失败：'+e.message);renderQueued()}
+};
 $('load').onclick=list;
 $('create').onclick=async()=>{
  try {const d=await api('/api/docs','POST',{title:$('title').value.trim()});$('title').value='';await list();await selectDoc(d);}
