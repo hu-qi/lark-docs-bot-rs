@@ -247,13 +247,17 @@ async fn get_doc(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<S
 fn block_page_path(id: &str, token: Option<&str>) -> ApiResult<String> {
     let mut path = format!("/docx/v1/documents/{id}/blocks?page_size=100");
     if let Some(token) = token {
-        if token.is_empty() || token.len() > 1024 || !token.bytes().all(|b|
-            b.is_ascii_alphanumeric() || b == b'-' || b == b'_'
-        ) {
+        if token.is_empty() || token.len() > 1024 || token.chars().any(char::is_control) {
             return Err(problem(StatusCode::BAD_REQUEST, "Invalid block page token"));
         }
         path.push_str("&page_token=");
-        path.push_str(token);
+        for byte in token.bytes() {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+                path.push(char::from(byte));
+            } else {
+                path.push_str(&format!("%{byte:02X}"));
+            }
+        }
     }
     Ok(path)
 }
@@ -571,7 +575,8 @@ mod tests {
     #[test] fn block_pagination_token_validation() {
         assert!(block_page_path("docx_abc", None).unwrap().contains("page_size=100"));
         assert!(block_page_path("docx_abc", Some("abc-123_")).unwrap().ends_with("page_token=abc-123_"));
-        assert!(block_page_path("docx_abc", Some("bad&token")).is_err());
+        assert!(block_page_path("docx_abc", Some("abc+/=")).unwrap().ends_with("page_token=abc%2B%2F%3D"));
+        assert!(block_page_path("docx_abc", Some("bad\\ntoken")).is_err());
         assert!(block_page_path("docx_abc", Some("")).is_err());
     }
     #[test] fn id_validation() {
