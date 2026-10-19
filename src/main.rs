@@ -53,7 +53,7 @@ struct ReplaceBlock { text: String, expected_text: Option<String> }
 #[derive(Deserialize)]
 struct ReplaceRuns { runs: Vec<RunEdit> }
 #[derive(Deserialize)]
-struct RunEdit { expected_text: String, text: String }
+struct RunEdit { expected_text: String, text: String, bold: Option<bool>, italic: Option<bool> }
 #[derive(Deserialize)]
 struct BlockPageQuery { page_token: Option<String> }
 #[derive(Deserialize)]
@@ -356,6 +356,12 @@ fn patch_runs_preserving_styles(existing: &[Value], edits: &[RunEdit]) -> ApiRes
         }
         let mut element = before.clone();
         element["text_run"]["content"] = json!(after.text);
+        if after.bold.is_some() || after.italic.is_some() {
+            let style = &mut element["text_run"]["text_element_style"];
+            if !style.is_object() { *style = json!({}); }
+            if let Some(value) = after.bold { style["bold"] = json!(value); }
+            if let Some(value) = after.italic { style["italic"] = json!(value); }
+        }
         result.push(element);
     }
     Ok(result)
@@ -514,7 +520,7 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap, Json(message): Json<
             {"name":"append_text","description":"Append text to a registered document","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"]}},
             {"name":"append_structured","description":"Append validated headings, paragraphs, lists or quotes to a registered document","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"blocks":{"type":"array","minItems":1,"maxItems":50,"items":{"type":"object","properties":{"kind":{"type":"string","enum":["text","heading1","heading2","heading3","bullet","ordered","quote"]},"text":{"type":"string"},"bold":{"type":"boolean"},"italic":{"type":"boolean"}},"required":["kind","text"]}}},"required":["id","blocks"]}},
             {"name":"update_text_block","description":"Replace a single unstyled plain-text block in a registered document; refuses rich or mixed elements","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"block_id":{"type":"string"},"text":{"type":"string"},"expected_text":{"type":"string"}},"required":["id","block_id","text"]}},
-            {"name":"update_text_runs","description":"Modify existing text runs while preserving each run's formatting; requires original text for every run","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"block_id":{"type":"string"},"runs":{"type":"array","minItems":1,"maxItems":100,"items":{"type":"object","properties":{"expected_text":{"type":"string"},"text":{"type":"string"}},"required":["expected_text","text"]}}},"required":["id","block_id","runs"]}},
+            {"name":"update_text_runs","description":"Modify existing text runs while preserving each run's formatting; requires original text for every run","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"block_id":{"type":"string"},"runs":{"type":"array","minItems":1,"maxItems":100,"items":{"type":"object","properties":{"expected_text":{"type":"string"},"text":{"type":"string"},"bold":{"type":"boolean"},"italic":{"type":"boolean"}},"required":["expected_text","text"]}}},"required":["id","block_id","runs"]}},
             {"name":"delete_block","description":"Delete a verified child block at an explicit Feishu document revision and index; requires writer key","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"parent_id":{"type":"string"},"block_id":{"type":"string"},"index":{"type":"integer","minimum":0},"document_revision_id":{"type":"integer","minimum":0}},"required":["id","parent_id","block_id","index","document_revision_id"]}}
         ]})),
         "tools/call" => {
@@ -661,13 +667,21 @@ mod tests {
             json!({"text_run":{"content":"bold","text_element_style":{"bold":true}}})
         ];
         let edits = vec![
-            RunEdit{expected_text:"normal".into(),text:"updated".into()},
-            RunEdit{expected_text:"bold".into(),text:"strong".into()}
+            RunEdit{expected_text:"normal".into(),text:"updated".into(),bold:None,italic:None},
+            RunEdit{expected_text:"bold".into(),text:"strong".into(),bold:None,italic:None}
         ];
         let result = patch_runs_preserving_styles(&original, &edits).unwrap();
         assert_eq!(result[1]["text_run"]["text_element_style"]["bold"], true);
         assert_eq!(result[0]["text_run"]["content"], "updated");
-        let stale = vec![RunEdit{expected_text:"wrong".into(),text:"oops".into()}, RunEdit{expected_text:"bold".into(),text:"ok".into()}];
+        let restyled = vec![
+            RunEdit{expected_text:"normal".into(),text:"normal".into(),bold:Some(true),italic:None},
+            RunEdit{expected_text:"bold".into(),text:"bold".into(),bold:Some(false),italic:Some(true)}
+        ];
+        let new_runs = patch_runs_preserving_styles(&original, &restyled).unwrap();
+        assert_eq!(new_runs[0]["text_run"]["text_element_style"]["bold"], true);
+        assert_eq!(new_runs[1]["text_run"]["text_element_style"]["bold"], false);
+        assert_eq!(new_runs[1]["text_run"]["text_element_style"]["italic"], true);
+        let stale = vec![RunEdit{expected_text:"wrong".into(),text:"oops".into(),bold:None,italic:None}, RunEdit{expected_text:"bold".into(),text:"ok".into(),bold:None,italic:None}];
         assert!(patch_runs_preserving_styles(&original, &stale).is_err());
         assert!(safe_run_elements(&json!({"block_type":2,"text":{"elements":[{"mention_user":{"user_id":"x"}}]}})).is_err());
     }
