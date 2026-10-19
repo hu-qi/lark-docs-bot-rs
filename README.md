@@ -122,3 +122,10 @@ MCP exposes `append_structured` with the same `id` and `blocks` fields. This sta
 ### Optional real structured-content verification
 
 The manual [Feishu API Live Smoke Test](https://github.com/hu-qi/lark-docs-bot-rs/actions/workflows/feishu-smoke.yml) has a `test_structured` checkbox (off by default). When enabled it creates a disposable document, inserts heading, unordered-list, ordered-list and quote blocks, and confirms their text can be read back. It does not touch existing documents. The Rust CI validates serialization and HTTP protocol behavior, but does not replace this live Feishu round-trip.
+
+
+### Editing existing structured blocks (experimental)
+
+The Web editor and REST `PATCH /api/docs/{id}/blocks/{block_id}` now support single-text-run paragraphs, H1-H3 headings, ordered/unordered list entries and quote blocks. Requests may include `expected_text` alongside `text`; if the block's current content no longer matches, the gateway returns HTTP 409 rather than overwriting unexpectedly. MCP `update_text_block` accepts the same optional `expected_text`. The gateway preserves the existing text-run element attributes when replacing its content. Multi-run text, embeds, and other complex document blocks are intentionally not supported. This is a best-effort read-before-write check, not an atomic Feishu compare-and-swap; concurrent writers may still race between the read and update. Use Feishu's native editor for highly concurrent or complex rich-text changes.
+
+The optional live smoke test's `test_structured` mode also verifies updating a freshly created heading and re-reading it. No existing document is modified by the test.
