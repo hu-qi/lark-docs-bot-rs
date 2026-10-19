@@ -8,7 +8,7 @@ section{border:1px solid #dce4ef;background:white;border-radius:12px;padding:20p
 input,textarea,button,select{font:inherit}input,textarea,select{display:block;border:1px solid #c7d3e1;border-radius:8px;width:100%;padding:10px;margin:7px 0 14px}
 button{background:#2365cc;color:white;border:none;border-radius:8px;padding:10px 14px;cursor:pointer}
 button.secondary{background:#e9eff9;color:#233b5d}button:disabled{opacity:.55}button+button{margin-left:6px}
-.editor-toolbar{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.editor-toolbar button{padding:6px 10px}
+.editor-toolbar{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.editor-toolbar button{padding:6px 10px}.editor-toolbar button[aria-pressed="true"]{background:#245bad;color:#fff}
 .rich-preview{padding:14px;border:1px solid #dce4ef;border-radius:9px;background:white;overflow-wrap:anywhere}
 .rich-preview h1{font-size:1.6em}.rich-preview h2{font-size:1.3em}.rich-preview h3{font-size:1.1em}
 .rich-preview h1,.rich-preview h2,.rich-preview h3,.rich-preview p{margin:0 0 8px}
@@ -167,23 +167,51 @@ async function loadParagraphs(docId,seq=refreshSequence) {
   const original=elements.map(e=>e.text_run.content).join('');
   const wrap=document.createElement('div');wrap.className='block-editor';
   const caption=document.createElement('label');caption.textContent=field+' · 内容块 '+(++count)+(elements.length>1?' · '+elements.length+' 个文本片段':'');
-  const areas=[];
+  const areas=[],formatStates=[];
   const runInputs=document.createElement('div');
+  const runPreview=document.createElement('div');runPreview.className='rich-preview';
+  const updateRunPreview=()=>{
+   runPreview.replaceChildren();
+   for(let i=0;i<areas.length;i++){
+    const span=document.createElement('span');
+    span.textContent=areas[i].value;
+    let node=span;
+    if(formatStates[i].italic){const em=document.createElement('em');em.append(node);node=em}
+    if(formatStates[i].bold){const strong=document.createElement('strong');strong.append(node);node=strong}
+    runPreview.append(node);
+   }
+  };
   for(let i=0;i<elements.length;i++){
    const item=elements[i].text_run;
-   const label=document.createElement('label');
+   const label=document.createElement('label');label.textContent='片段 '+(i+1);
    const styles=item.text_element_style||{};
-   label.textContent='片段 '+(i+1)+(styles.bold?' · 加粗':'')+(styles.italic?' · 斜体':'');
+   const formatting={bold:styles.bold===true,italic:styles.italic===true};
+   formatStates.push(formatting);
    const fieldArea=document.createElement('textarea');fieldArea.value=item.content;fieldArea.rows=2;fieldArea.maxLength=20000;
-   areas.push(fieldArea);runInputs.append(label,fieldArea);
+   fieldArea.addEventListener('input',updateRunPreview);
+   const controls=document.createElement('div');controls.className='editor-toolbar';
+   for(const [key,title] of [['bold','B 加粗'],['italic','I 斜体']]){
+    const toggle=document.createElement('button');toggle.type='button';toggle.className='secondary';toggle.textContent=title;
+    toggle.setAttribute('aria-pressed',String(formatting[key]));
+    toggle.onclick=()=>{
+     formatting[key]=!formatting[key];
+     toggle.setAttribute('aria-pressed',String(formatting[key]));
+     updateRunPreview();
+    };
+    controls.append(toggle);
+   }
+   areas.push(fieldArea);runInputs.append(label,fieldArea,controls);
   }
+  updateRunPreview();
+  const previewTitle=document.createElement('label');previewTitle.textContent='本段落修改后预览';
+  runInputs.append(previewTitle,runPreview);
   const button=document.createElement('button');button.className='secondary';button.textContent='保存该段落';
   button.onclick=async()=>{
    if(!current || current.id!==docId)return status('文档已切换，请刷新');
-   const edits=areas.map((area,i)=>({expected_text:elements[i].text_run.content,text:area.value}));
-   if(edits.every(item=>item.text===item.expected_text))return status('内容没有变化');
+   const edits=areas.map((area,i)=>({expected_text:elements[i].text_run.content,text:area.value,bold:formatStates[i].bold,italic:formatStates[i].italic}));
+   if(edits.every((item,i)=>item.text===item.expected_text&&item.bold===(elements[i].text_run.text_element_style?.bold===true)&&item.italic===(elements[i].text_run.text_element_style?.italic===true)))return status('内容没有变化');
    if(edits.reduce((sum,item)=>sum+Array.from(item.text).length,0)>20000)return status('整个内容块不能超过 20000 字符');
-   if(!confirm('确认修改 '+edits.length+' 个文本片段？原有片段格式会保留。'))return;
+   if(!confirm('确认修改 '+edits.length+' 个文本片段？将按预览同步文字与加粗、斜体设置。'))return;
    button.disabled=true;
    try {
     await api('/api/docs/'+encodeURIComponent(docId)+'/blocks/'+encodeURIComponent(block.block_id)+'/runs','PATCH',{runs:edits});
