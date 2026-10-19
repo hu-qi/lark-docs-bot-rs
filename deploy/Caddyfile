@@ -1,0 +1,19 @@
+{
+    email {$ACME_EMAIL}
+    admin off
+}
+{$SITE_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy lark-docs:3000
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+    request_body {
+        max_size 256KB
+    }
+}
