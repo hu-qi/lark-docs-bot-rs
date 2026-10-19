@@ -114,6 +114,26 @@ async fn verify() -> Result<(), String> {
         }
         println!("STEP 6/6: revision-pinned deletion verified in newly created test document");
     }
+    if env::var("FEISHU_TEST_STRUCTURED").as_deref() == Ok("true") {
+        let structured = call(&client, Method::POST,
+            &format!("{base}/docx/v1/documents/{id}/blocks/{id}/children"), Some(token),
+            Some(json!({"children":[
+                {"block_type":3,"heading1":{"elements":[{"text_run":{"content":"Smoke Heading"}}]}},
+                {"block_type":12,"bullet":{"elements":[{"text_run":{"content":"Smoke bullet item"}}]}},
+                {"block_type":13,"ordered":{"elements":[{"text_run":{"content":"Smoke ordered item"}}]}},
+                {"block_type":15,"quote":{"elements":[{"text_run":{"content":"Smoke quote"}}]}}
+            ]}))).await?;
+        if structured["children"].as_array().map(Vec::len) != Some(4) {
+            return Err("Structured block creation returned unexpected block count".into());
+        }
+        let read = call(&client, Method::GET,
+            &format!("{base}/docx/v1/documents/{id}/raw_content"), Some(token), None).await?;
+        let content = read["content"].as_str().ok_or("Missing raw text after structured insert")?;
+        for expected in ["Smoke Heading","Smoke bullet item","Smoke ordered item","Smoke quote"] {
+            if !content.contains(expected) { return Err("Structured block readback mismatch".into()); }
+        }
+        println!("Structured heading/list/quote insert and readback verified");
+    }
     println!("Smoke test succeeded. Document and block IDs: {id} / {block_id}");
     Ok(())
 }
