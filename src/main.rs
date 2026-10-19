@@ -51,6 +51,10 @@ struct StructuredBlock { kind: String, text: String, bold: Option<bool>, italic:
 #[derive(Deserialize)]
 struct ReplaceBlock { text: String, expected_text: Option<String> }
 #[derive(Deserialize)]
+struct ReplaceRuns { runs: Vec<RunEdit> }
+#[derive(Deserialize)]
+struct RunEdit { expected_text: String, text: String }
+#[derive(Deserialize)]
 struct BlockPageQuery { page_token: Option<String> }
 #[derive(Deserialize)]
 struct DeleteBlockRequest { parent_id: String, block_id: String, index: usize, document_revision_id: i64 }
@@ -320,6 +324,56 @@ async fn replace_block_internal(s: &AppState, id: &str, block_id: &str, text: &s
     lark(s, reqwest::Method::PATCH, &format!("/docx/v1/documents/{id}/blocks/{block_id}"),
         Some(json!({"update_text_elements":{"elements":[run]}}))).await
 }
+fn safe_run_elements(block: &Value) -> ApiResult<Vec<Value>> {
+    let field = match block["block_type"].as_i64() {
+        Some(2) => "text", Some(3) => "heading1", Some(4) => "heading2",
+        Some(5) => "heading3", Some(12) => "bullet", Some(13) => "ordered",
+        Some(15) => "quote",
+        _ => return Err(problem(StatusCode::BAD_REQUEST, "Unsupported block type")),
+    };
+    let elements = block[field]["elements"].as_array().ok_or_else(||
+        problem(StatusCode::BAD_REQUEST, "Missing text elements"))?;
+    if elements.is_empty() || elements.len() > 100 || elements.iter().any(|e|
+        e["text_run"]["content"].as_str().is_none() || e.as_object().is_none()
+        || e.as_object().is_some_and(|o| o.len() != 1 || !o.contains_key("text_run"))
+    ) {
+        return Err(problem(StatusCode::BAD_REQUEST, "Mixed or unsupported rich text elements"));
+    }
+    Ok(elements.clone())
+}
+fn patch_runs_preserving_styles(existing: &[Value], edits: &[RunEdit]) -> ApiResult<Vec<Value>> {
+    if existing.len() != edits.len() || edits.is_empty() {
+        return Err(problem(StatusCode::CONFLICT, "Text run count changed; reload before editing"));
+    }
+    let total: usize = edits.iter().map(|e| e.text.chars().count()).sum();
+    if total > 20000 {
+        return Err(problem(StatusCode::BAD_REQUEST, "Combined text exceeds 20000 characters"));
+    }
+    let mut result = Vec::with_capacity(existing.len());
+    for (before, after) in existing.iter().zip(edits.iter()) {
+        if before["text_run"]["content"].as_str() != Some(after.expected_text.as_str()) {
+            return Err(problem(StatusCode::CONFLICT, "Text run changed; reload before editing"));
+        }
+        let mut element = before.clone();
+        element["text_run"]["content"] = json!(after.text);
+        result.push(element);
+    }
+    Ok(result)
+}
+async fn replace_runs_internal(s: &AppState, id: &str, block_id: &str, edits: &[RunEdit]) -> ApiResult<Value> {
+    if !valid_id(block_id) || block_id == id {
+        return Err(problem(StatusCode::BAD_REQUEST, "Invalid editable block ID"));
+    }
+    let block = lark(s, reqwest::Method::GET, &format!("/docx/v1/documents/{id}/blocks/{block_id}"), None).await?;
+    let current = safe_run_elements(&block["block"])?;
+    let updated = patch_runs_preserving_styles(&current, edits)?;
+    lark(s, reqwest::Method::PATCH, &format!("/docx/v1/documents/{id}/blocks/{block_id}"),
+        Some(json!({"update_text_elements":{"elements":updated}}))).await
+}
+async fn replace_runs(State(s): State<AppState>, headers: HeaderMap, Path((id, block_id)): Path<(String, String)>, Json(req): Json<ReplaceRuns>) -> ApiResult<Json<Value>> {
+    allowed(&s, &headers, &id, true).await?;
+    Ok(Json(replace_runs_internal(&s, &id, &block_id, &req.runs).await?))
+}
 async fn replace_block(State(s): State<AppState>, headers: HeaderMap, Path((id, block_id)): Path<(String, String)>, Json(req): Json<ReplaceBlock>) -> ApiResult<Json<Value>> {
     allowed(&s, &headers, &id, true).await?;
     Ok(Json(replace_block_internal(&s, &id, &block_id, &req.text, req.expected_text.as_deref()).await?))
@@ -471,6 +525,14 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap, Json(message): Json<
                         allowed(&s, &headers, doc_id, true).await?;
                         replace_block_internal(&s, doc_id, block_id, text, args["expected_text"].as_str()).await
                     }
+                    "update_text_runs" => {
+                        let doc_id = args["id"].as_str().unwrap_or("");
+                        let block_id = args["block_id"].as_str().unwrap_or("");
+                        allowed(&s, &headers, doc_id, true).await?;
+                        let params: ReplaceRuns = serde_json::from_value(args.clone()).map_err(|_|
+                            problem(StatusCode::BAD_REQUEST, "Invalid update_text_runs arguments"))?;
+                        replace_runs_internal(&s, doc_id, block_id, &params.runs).await
+                    }
                     "delete_block" => {
                         let doc_id = args["id"].as_str().unwrap_or("");
                         allowed(&s, &headers, doc_id, true).await?;
@@ -534,6 +596,7 @@ async fn main() {
         .route("/api/docs/{id}/append", post(append))
         .route("/api/docs/{id}/append-structured", post(append_structured))
         .route("/api/docs/{id}/blocks/{block_id}", axum::routing::patch(replace_block))
+        .route("/api/docs/{id}/blocks/{block_id}/runs", axum::routing::patch(replace_runs))
         .route("/api/docs/{id}/blocks/delete", post(delete_block))
         .route("/api/docs/{id}/access", post(set_access))
         .route("/mcp", post(mcp))
@@ -556,6 +619,22 @@ mod tests {
         assert!(!apply_bucket(&mut bucket, 2, now));
         assert!(apply_bucket(&mut bucket, 2, now + Duration::from_secs(61)));
         assert_eq!(bucket.count, 1);
+    }
+    #[test] fn multi_run_edit_preserves_styles_and_checks_originals() {
+        let original = vec![
+            json!({"text_run":{"content":"normal"}}),
+            json!({"text_run":{"content":"bold","text_element_style":{"bold":true}}})
+        ];
+        let edits = vec![
+            RunEdit{expected_text:"normal".into(),text:"updated".into()},
+            RunEdit{expected_text:"bold".into(),text:"strong".into()}
+        ];
+        let result = patch_runs_preserving_styles(&original, &edits).unwrap();
+        assert_eq!(result[1]["text_run"]["text_element_style"]["bold"], true);
+        assert_eq!(result[0]["text_run"]["content"], "updated");
+        let stale = vec![RunEdit{expected_text:"wrong".into(),text:"oops".into()}, RunEdit{expected_text:"bold".into(),text:"ok".into()}];
+        assert!(patch_runs_preserving_styles(&original, &stale).is_err());
+        assert!(safe_run_elements(&json!({"block_type":2,"text":{"elements":[{"mention_user":{"user_id":"x"}}]}})).is_err());
     }
     #[test] fn editable_text_run_preserves_style_and_refuses_mixed_elements() {
         let element = json!({"text_run":{"content":"Hello","text_element_style":{"bold":true}}});
