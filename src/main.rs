@@ -232,6 +232,14 @@ async fn append_internal(state: &AppState, id: &str, text: &str) -> ApiResult<Va
 }
 async fn health() -> Json<Value> { Json(json!({"status":"ok"})) }
 async fn index() -> Html<&'static str> { Html(include_str!("index.html")) }
+async fn app_js() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "text/javascript; charset=utf-8"), (header::CACHE_CONTROL, "no-store")],
+        include_str!("app.js"))
+}
+async fn app_css() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "text/css; charset=utf-8"), (header::CACHE_CONTROL, "no-store")],
+        include_str!("app.css"))
+}
 async fn list_docs(State(s): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
     require(&headers, &s.config, 1)?;
     let docs: Vec<Value> = s.registry.lock().await.values().map(|d| json!({
@@ -628,6 +636,8 @@ async fn main() {
     };
     let app = Router::new()
         .route("/", get(index))
+        .route("/assets/app.js", get(app_js))
+        .route("/assets/app.css", get(app_css))
         .route("/health", get(health))
         .route("/api/docs", get(list_docs).post(create_doc))
         .route("/api/docs/{id}", get(get_doc))
