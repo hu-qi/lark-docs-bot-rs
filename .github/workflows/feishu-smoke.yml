@@ -3,6 +3,11 @@ name: Feishu API Live Smoke Test
 on:
   workflow_dispatch:
     inputs:
+      test_multirun:
+        description: 'Verify multi-run formatting and edits on a disposable document'
+        required: false
+        type: boolean
+        default: false
       test_structured:
         description: 'Create and verify headings, list items and quote in fresh test doc'
         required: false
@@ -44,4 +49,5 @@ jobs:
           LARK_APP_SECRET: ${{ secrets.APPSECRET }}
           FEISHU_TEST_DELETE: ${{ inputs.test_delete }}
           FEISHU_TEST_STRUCTURED: ${{ inputs.test_structured }}
+          FEISHU_TEST_MULTIRUN: ${{ inputs.test_multirun }}
         run: cargo run --bin feishu-smoke
