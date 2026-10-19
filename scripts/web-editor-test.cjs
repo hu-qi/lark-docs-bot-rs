@@ -2,9 +2,11 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const html = fs.readFileSync('src/index.html', 'utf8');
-const match = html.match(/<script>([\s\S]*?)<\/script>/);
-assert.ok(match, 'embedded UI script exists');
-new vm.Script(match[1], { filename: 'web-editor.js' });
+const script = fs.readFileSync('src/app.js', 'utf8');
+assert.ok(html.includes('src="/assets/app.js"'), 'same-origin script referenced');
+assert.ok(html.includes('href="/assets/app.css"'), 'same-origin stylesheet referenced');
+assert.ok(!html.includes('<script>'), 'inline script removed');
+new vm.Script(script, { filename: 'web-editor.js' });
 for (const id of ['visualBlocks','draftPreview','useH1','useH2','useBullet','useQuote','useBold','useItalic']) {
   assert.ok(html.includes('id="' + id + '"'), 'expected toolbar or preview element: ' + id);
 }
@@ -15,7 +17,7 @@ class Element {
   get textContent() { return this._text; }
   set textContent(value) { this._text=String(value);this.children=[]; }
 }
-const source = match[1].slice(match[1].indexOf('function renderRichBlock('),match[1].indexOf('function renderDraft('));
+const source = script.slice(script.indexOf('function renderRichBlock('),script.indexOf('function renderDraft('));
 const context={document:{createElement:(tag)=>new Element(tag)}};
 vm.runInNewContext(source,context);
 const root = new Element('div');
