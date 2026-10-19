@@ -1,13 +1,15 @@
 use axum::{
     extract::{Path, State},
-    http::{header, HeaderMap, StatusCode},
+    body::Body,
+    middleware::{self, Next},
+    http::{header, HeaderMap, Request, StatusCode, Method},
     response::{Html, IntoResponse},
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, env, path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, env, path::PathBuf, sync::Arc, time::{Duration, Instant}};
 use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
 use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
@@ -20,7 +22,9 @@ struct AppState {
     config: Arc<Config>,
     registry: Arc<Mutex<BTreeMap<String, DocEntry>>>,
     token: Arc<Mutex<Option<Token>>>,
+    rate_limits: Arc<Mutex<BTreeMap<String, RateBucket>>>,
 }
+struct RateBucket { started: Instant, count: u32 }
 struct Config {
     app_id: String,
     app_secret: String,
@@ -29,6 +33,8 @@ struct Config {
     api_base: String,
     doc_base: String,
     data_file: PathBuf,
+    read_limit_per_minute: u32,
+    write_limit_per_minute: u32,
 }
 #[derive(Clone)]
 struct Token { value: String, expires: std::time::Instant }
@@ -62,6 +68,41 @@ fn require(headers: &HeaderMap, c: &Config, needed: u8) -> ApiResult<()> {
     if role(headers, c) >= needed { Ok(()) } else {
         Err(problem(StatusCode::UNAUTHORIZED, "Valid Bearer API key required"))
     }
+}
+fn apply_bucket(bucket: &mut RateBucket, limit: u32, now: Instant) -> bool {
+    if now.duration_since(bucket.started) >= Duration::from_secs(60) {
+        bucket.started = now;
+        bucket.count = 0;
+    }
+    if bucket.count >= limit { return false; }
+    bucket.count += 1;
+    true
+}
+async fn security_gate(State(state): State<AppState>, request: Request<Body>, next: Next) -> axum::response::Response {
+    let path = request.uri().path();
+    if path == "/health" || path == "/" {
+        return next.run(request).await;
+    }
+    let role = role(request.headers(), &state.config);
+    let is_write = request.method() != Method::GET;
+    let category = if role == 2 { "admin" } else if role == 1 { "writer" } else { "anonymous" };
+    let bucket_key = format!("{category}:{}", if is_write { "write" } else { "read" });
+    let limit = if is_write { state.config.write_limit_per_minute } else { state.config.read_limit_per_minute };
+    let allowed = {
+        let mut table = state.rate_limits.lock().await;
+        let bucket = table.entry(bucket_key).or_insert_with(|| RateBucket { started: Instant::now(), count: 0 });
+        apply_bucket(bucket, limit, Instant::now())
+    };
+    if !allowed {
+        tracing::warn!(role = category, "request rate limit exceeded");
+        return problem(StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded; retry in one minute").into_response();
+    }
+    let result = next.run(request).await;
+    // Do not log request bodies, bearer credentials or document contents.
+    if is_write {
+        tracing::info!(role = category, operation = path, status = %result.status(), "document API mutation");
+    }
+    result
 }
 fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
@@ -388,8 +429,11 @@ async fn main() {
         api_base: env::var("LARK_API_BASE").unwrap_or_else(|_| "https://open.feishu.cn/open-apis".into()),
         doc_base: env::var("LARK_DOC_BASE").unwrap_or_else(|_| "https://www.feishu.cn".into()),
         data_file: env::var("DATA_FILE").unwrap_or_else(|_| "data/documents.json".into()).into(),
+        read_limit_per_minute: env::var("READ_LIMIT_PER_MINUTE").ok().and_then(|v| v.parse().ok()).unwrap_or(120),
+        write_limit_per_minute: env::var("WRITE_LIMIT_PER_MINUTE").ok().and_then(|v| v.parse().ok()).unwrap_or(30),
     };
     assert!(config.admin_key.len() >= 32 && config.write_key.len() >= 32 && config.admin_key != config.write_key, "Use distinct API keys of at least 32 characters");
+    assert!(config.read_limit_per_minute > 0 && config.write_limit_per_minute > 0, "Rate limits must be positive");
     let bind = env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".into());
     let registry: BTreeMap<String, DocEntry> = match tokio::fs::read(&config.data_file).await {
         Ok(contents) => serde_json::from_slice(&contents).expect("Invalid registry JSON"),
@@ -401,6 +445,7 @@ async fn main() {
         config: Arc::new(config),
         registry: Arc::new(Mutex::new(registry)),
         token: Arc::new(Mutex::new(None)),
+        rate_limits: Arc::new(Mutex::new(BTreeMap::new())),
     };
     let app = Router::new()
         .route("/", get(index))
@@ -415,6 +460,7 @@ async fn main() {
         .route("/api/docs/{id}/blocks/delete", post(delete_block))
         .route("/api/docs/{id}/access", post(set_access))
         .route("/mcp", post(mcp))
+        .layer(middleware::from_fn_with_state(state.clone(), security_gate))
         .layer(RequestBodyLimitLayer::new(1024 * 256))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -425,6 +471,15 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn per_role_buckets_reset_after_window() {
+        let now = Instant::now();
+        let mut bucket = RateBucket { started: now, count: 0 };
+        assert!(apply_bucket(&mut bucket, 2, now));
+        assert!(apply_bucket(&mut bucket, 2, now));
+        assert!(!apply_bucket(&mut bucket, 2, now));
+        assert!(apply_bucket(&mut bucket, 2, now + Duration::from_secs(61)));
+        assert_eq!(bucket.count, 1);
+    }
     #[test] fn id_validation() {
         assert!(valid_id("docx_abc-123"));
         assert!(!valid_id("../secret"));
