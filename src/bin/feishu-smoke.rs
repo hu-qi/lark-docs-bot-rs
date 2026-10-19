@@ -82,6 +82,38 @@ async fn verify() -> Result<(), String> {
         return Err("Updated block did not round-trip".into());
     }
     println!("STEP 5/5: block update and readback verified");
+    // This optional destructive check is restricted to a document created
+    // during THIS test run. It never accepts an external document identifier.
+    if env::var("FEISHU_TEST_DELETE").as_deref() == Ok("true") {
+        let metadata = call(&client, Method::GET,
+            &format!("{base}/docx/v1/documents/{id}"), Some(token), None).await?;
+        let revision = metadata["document"]["revision_id"].as_i64()
+            .ok_or("Document metadata did not return numeric revision_id")?;
+        if revision < 0 { return Err("Invalid revision".into()); }
+        let children = call(&client, Method::GET,
+            &format!("{base}/docx/v1/documents/{id}/blocks/{id}/children?document_revision_id={revision}&page_size=500"),
+            Some(token), None).await?;
+        if children["has_more"].as_bool() == Some(true) {
+            return Err("Incomplete children page; refusing deletion".into());
+        }
+        let blocks = children["items"].as_array().ok_or("Missing child block list")?;
+        let matches: Vec<usize> = blocks.iter().enumerate()
+            .filter_map(|(i, item)| (item["block_id"].as_str() == Some(block_id)).then_some(i)).collect();
+        if matches.len() != 1 { return Err("Target block missing or duplicated; refusing deletion".into()); }
+        let index = matches[0];
+        if blocks[index]["block_type"].as_i64() != Some(2) {
+            return Err("Target is not a text block".into());
+        }
+        call(&client, Method::DELETE,
+            &format!("{base}/docx/v1/documents/{id}/blocks/{id}/children/batch_delete?document_revision_id={revision}"),
+            Some(token), Some(json!({"start_index":index,"end_index":index+1}))).await?;
+        let after = call(&client, Method::GET,
+            &format!("{base}/docx/v1/documents/{id}/raw_content"), Some(token), None).await?;
+        if after["content"].as_str().unwrap_or("").contains(replacement) {
+            return Err("Deleted text still appears in document".into());
+        }
+        println!("STEP 6/6: revision-pinned deletion verified in newly created test document");
+    }
     println!("Smoke test succeeded. Document and block IDs: {id} / {block_id}");
     Ok(())
 }
