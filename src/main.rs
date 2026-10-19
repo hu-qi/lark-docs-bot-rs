@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     body::Body,
     middleware::{self, Next},
     http::{header, HeaderMap, Request, StatusCode, Method},
@@ -50,6 +50,8 @@ struct AppendStructured { blocks: Vec<StructuredBlock> }
 struct StructuredBlock { kind: String, text: String, bold: Option<bool>, italic: Option<bool> }
 #[derive(Deserialize)]
 struct ReplaceBlock { text: String, expected_text: Option<String> }
+#[derive(Deserialize)]
+struct BlockPageQuery { page_token: Option<String> }
 #[derive(Deserialize)]
 struct DeleteBlockRequest { parent_id: String, block_id: String, index: usize, document_revision_id: i64 }
 #[derive(Deserialize)]
@@ -242,9 +244,23 @@ async fn get_doc(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<S
     let data = lark(&s, reqwest::Method::GET, &format!("/docx/v1/documents/{id}/raw_content"), None).await?;
     Ok(Json(json!({"document":doc,"content":data["content"],"url":doc_url(&s.config,&id)})))
 }
-async fn blocks(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+fn block_page_path(id: &str, token: Option<&str>) -> ApiResult<String> {
+    let mut path = format!("/docx/v1/documents/{id}/blocks?page_size=100");
+    if let Some(token) = token {
+        if token.is_empty() || token.len() > 1024 || !token.bytes().all(|b|
+            b.is_ascii_alphanumeric() || b == b'-' || b == b'_'
+        ) {
+            return Err(problem(StatusCode::BAD_REQUEST, "Invalid block page token"));
+        }
+        path.push_str("&page_token=");
+        path.push_str(token);
+    }
+    Ok(path)
+}
+async fn blocks(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<String>, Query(query): Query<BlockPageQuery>) -> ApiResult<Json<Value>> {
     allowed(&s, &headers, &id, false).await?;
-    let data = lark(&s, reqwest::Method::GET, &format!("/docx/v1/documents/{id}/blocks?page_size=100"), None).await?;
+    let path = block_page_path(&id, query.page_token.as_deref())?;
+    let data = lark(&s, reqwest::Method::GET, &path, None).await?;
     Ok(Json(data))
 }
 async fn get_document_metadata(State(s): State<AppState>, headers: HeaderMap, Path(id): Path<String>) -> ApiResult<Json<Value>> {
@@ -551,6 +567,12 @@ mod tests {
         assert_eq!(encoded[0]["heading2"]["elements"][0]["text_run"]["text_element_style"]["bold"], true);
         assert!(encode_structured_blocks(&[StructuredBlock { kind: "image".into(), text: "not supported".into(), bold: None, italic: None }]).is_err());
         assert!(encode_structured_blocks(&[]).is_err());
+    }
+    #[test] fn block_pagination_token_validation() {
+        assert!(block_page_path("docx_abc", None).unwrap().contains("page_size=100"));
+        assert!(block_page_path("docx_abc", Some("abc-123_")).unwrap().ends_with("page_token=abc-123_"));
+        assert!(block_page_path("docx_abc", Some("bad&token")).is_err());
+        assert!(block_page_path("docx_abc", Some("")).is_err());
     }
     #[test] fn id_validation() {
         assert!(valid_id("docx_abc-123"));
