@@ -141,6 +141,20 @@ async function loadParagraphs(docId,seq=refreshSequence) {
     const text=runs.map(e=>e.text_run.content).join('');
     const styles=runs.length===1?(runs[0].text_run.text_element_style||{}):{};
     renderRichBlock(visual,field,text,styles);
+    if(runs.length>1){
+     const element=visual.lastElementChild;
+     const target=(field==='bullet'||field==='ordered')?element?.lastElementChild:element;
+     if(target){
+      target.replaceChildren();
+      for(const run of runs){
+       const style=run.text_run.text_element_style||{};
+       let node=target;
+       if(style.bold){const bold=document.createElement('strong');node.append(bold);node=bold}
+       if(style.italic){const italic=document.createElement('em');node.append(italic);node=italic}
+       const span=document.createElement('span');span.textContent=run.text_run.content;node.append(span);
+      }
+     }
+    }
    } else {
     const note=document.createElement('p');note.className='empty';
     note.textContent='[此内容包含不支持的嵌入元素]';visual.append(note);
