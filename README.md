@@ -134,3 +134,8 @@ The optional live smoke test's `test_structured` mode also verifies updating a f
 ### Long-document block pagination
 
 `GET /api/docs/{id}/blocks` supports optional `page_token` forwarding for Feishu's cursor-based pagination (100 blocks per page). The gateway URL-encodes opaque tokens and rejects malformed control characters. The Web editor now follows up to **10 pages / 1,000 blocks**, avoids repeated cursors, and indicates when a document exceeds that limit. This page limit is deliberately bounded to reduce unexpected Feishu API calls. Existing REST/MCP callers can continue consuming pages explicitly; nested child blocks are not recursively expanded in the browser.
+
+
+### Web editor visual preview and quick toolbar
+
+The browser editor now offers a **semantic, read-only rich preview** of supported Feishu text blocks (paragraphs, H1–H3, bullet/numbered lists and blockquotes) alongside the existing raw-text view. Draft content has a live preview and shortcut buttons to choose heading/list/quote types and toggle bold/italic for **new blocks**. Preview text is inserted through DOM `textContent` rather than parsed as HTML, so embedded markup is not executed. Unsupported embedded elements are shown as placeholders, not silently rendered as plain text. Loading a different document invalidates stale refresh responses. Preview is approximate rather than pixel-identical with Feishu, and style fidelity is intentionally limited for mixed-run blocks. CI runs `scripts/web-editor-test.cjs` to check syntax, safe DOM rendering and list grouping.
