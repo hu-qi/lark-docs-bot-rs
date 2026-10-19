@@ -17,6 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Check deployment credentials
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -45,7 +48,20 @@ jobs:
           umask 077
           mkdir -p ~/.ssh
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-      - name: Deploy reviewed revision with password authentication
+      - name: Package the audited GitHub commit
+        run: |
+          git archive --format=tar.gz --output="$RUNNER_TEMP/lark-source.tar.gz" "$GITHUB_SHA"
+          sha256sum "$RUNNER_TEMP/lark-source.tar.gz"
+      - name: Upload source archive to ECS (no server GitHub access required)
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          SSHPASS: ${{ secrets.DEPLOY_PASSWORD }}
+        run: |
+          remote_archive="/tmp/lark-docs-source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
+          sshpass -e scp -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            "$RUNNER_TEMP/lark-source.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:$remote_archive"
+      - name: Deploy uploaded revision with password authentication
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
@@ -53,24 +69,30 @@ jobs:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           COMMIT: ${{ github.sha }}
         run: |
-          # Empty DEPLOY_PATH defaults to ~/lark-docs-bot-rs on the remote host.
-          # Password flows through sshpass's environment, not its command line.
+          remote_archive="/tmp/lark-docs-source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
+          archive_sha="$(sha256sum "$RUNNER_TEMP/lark-source.tar.gz" | cut -d' ' -f1)"
+          # Avoid passing shell-sensitive path values through remote SSH argument parsing.
+          if [ -n "$DEPLOY_PATH" ] && [[ ! "$DEPLOY_PATH" =~ ^/[a-zA-Z0-9_./-]+$ ]]; then
+            echo "::error::DEPLOY_PATH must be an absolute path with no spaces or shell metacharacters"
+            exit 2
+          fi
           sshpass -e ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no \
             -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
-            "$DEPLOY_USER@$DEPLOY_HOST" sh -s -- "$DEPLOY_PATH" "$COMMIT" <<'REMOTE_SCRIPT'
+            "$DEPLOY_USER@$DEPLOY_HOST" sh -s -- "${DEPLOY_PATH:-}" "$COMMIT" "$remote_archive" "$archive_sha" <<'REMOTE_SCRIPT'
           set -eu
           if [ -n "$1" ]; then
-            case "$1" in
-              /*) cd "$1" ;;
-              *) echo "DEPLOY_PATH must be an absolute path" >&2; exit 2 ;;
-            esac
+            cd "$1"
           else
             cd "$HOME/lark-docs-bot-rs"
           fi
           test -s .env.production || { echo "Missing .env.production: configure production secrets on the server first" >&2; exit 2; }
-          git fetch --prune origin main
-          git cat-file -e "$2^{commit}"
-          git checkout --detach "$2"
+          test -f compose.prod.yaml || { echo "Missing compose.prod.yaml in deployment directory" >&2; exit 2; }
+          printf '%s  %s\n' "$4" "$3" | sha256sum -c -
+          # The source archive contains tracked files only; .git, .env.production
+          # and the backups directory are not overwritten.
+          tar -xzf "$3" -C .
+          rm -f "$3"
+          printf '%s\n' "$2" > .deployed-revision
           bash deploy/preflight.sh .env.production
           bash deploy/backup.sh "$(pwd)/backups"
           docker compose --env-file .env.production -f compose.prod.yaml up -d --build
