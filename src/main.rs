@@ -264,11 +264,44 @@ fn mcp_error(id: Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
 }
 fn mcp_result(id: Value, val: Value) -> Value { json!({"jsonrpc":"2.0","id":id,"result":val}) }
-async fn mcp(State(s): State<AppState>, headers: HeaderMap, Json(message): Json<Value>) -> impl IntoResponse {
-    let id = message.get("id").cloned().unwrap_or(Value::Null);
+fn mcp_request_validation(message: &Value) -> Result<Option<Value>, Value> {
+    if message.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
+        || !message.is_object()
+        || message.get("method").and_then(Value::as_str).is_none()
+    {
+        return Err(mcp_error(message.get("id").cloned().unwrap_or(Value::Null), -32600, "Invalid JSON-RPC 2.0 request"));
+    }
     let method = message["method"].as_str().unwrap_or("");
-    if method == "notifications/initialized" { return StatusCode::ACCEPTED.into_response(); }
-    if id.is_null() { return (StatusCode::BAD_REQUEST, Json(mcp_error(id,-32600,"Missing JSON-RPC request id"))).into_response(); }
+    let id = message.get("id").cloned();
+    if id.is_none() {
+        if method.starts_with("notifications/") { return Ok(None); }
+        return Err(mcp_error(Value::Null, -32600, "JSON-RPC method requires an id"));
+    }
+    if id.as_ref().is_some_and(|id| !(id.is_string() || id.is_number())) {
+        return Err(mcp_error(Value::Null, -32600, "JSON-RPC id must be a string or number"));
+    }
+    Ok(id)
+}
+async fn mcp(State(s): State<AppState>, headers: HeaderMap, Json(message): Json<Value>) -> impl IntoResponse {
+    // Stateless JSON response transport: no SSE stream or session identifiers.
+    // Authenticate the endpoint before advertising capabilities or invoking tools.
+    if let Err(error) = require(&headers, &s.config, 1) {
+        return error.into_response();
+    }
+    if let Some(origin) = headers.get(header::ORIGIN) {
+        // Browser-based cross-site calls have no permitted CORS origin. Reject
+        // them explicitly rather than allowing cookie-less cross-origin POSTs.
+        let origin = origin.to_str().unwrap_or("");
+        let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("");
+        let allowed = origin == format!("https://{host}") || origin == format!("http://{host}");
+        if !allowed { return problem(StatusCode::FORBIDDEN, "Cross-origin MCP calls are not allowed").into_response(); }
+    }
+    let id = match mcp_request_validation(&message) {
+        Ok(Some(id)) => id,
+        Ok(None) => return StatusCode::ACCEPTED.into_response(),
+        Err(error) => return (StatusCode::BAD_REQUEST, Json(error)).into_response(),
+    };
+    let method = message["method"].as_str().unwrap_or("");
     let answer = match method {
         "initialize" => mcp_result(id, json!({
             "protocolVersion":"2025-03-26",
@@ -338,7 +371,10 @@ async fn mcp(State(s): State<AppState>, headers: HeaderMap, Json(message): Json<
         }
         _ => mcp_error(id,-32601,"Method not found"),
     };
-    (StatusCode::OK, Json(answer)).into_response()
+    let mut response = (StatusCode::OK, Json(answer)).into_response();
+    response.headers_mut().insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+    response.headers_mut().insert("mcp-protocol-version", "2025-03-26".parse().unwrap());
+    response
 }
 #[tokio::main]
 async fn main() {
@@ -393,6 +429,14 @@ mod tests {
         assert!(valid_id("docx_abc-123"));
         assert!(!valid_id("../secret"));
         assert!(!valid_id(""));
+    }
+    #[test] fn jsonrpc_request_validation() {
+        assert!(mcp_request_validation(&json!({"jsonrpc":"2.0","id":1,"method":"initialize"})).is_ok());
+        assert!(mcp_request_validation(&json!({"jsonrpc":"2.0","method":"notifications/initialized"})).unwrap().is_none());
+        assert!(mcp_request_validation(&json!({"jsonrpc":"2.0","method":"tools/list"})).is_err());
+        assert!(mcp_request_validation(&json!({"jsonrpc":"1.0","id":1,"method":"ping"})).is_err());
+        assert!(mcp_request_validation(&json!([{"jsonrpc":"2.0","id":1,"method":"ping"}])).is_err());
+        assert!(mcp_request_validation(&json!({"jsonrpc":"2.0","id":null,"method":"ping"})).is_err());
     }
     #[test] fn guarded_delete_rejects_stale_position() {
         let items = vec![json!({"block_id":"alpha"}), json!({"block_id":"beta"})];
