@@ -90,6 +90,10 @@ async function list() {
  }catch(e){status(e.message);}
 }
 async function selectDoc(doc) {
+ if(current && current.id!==doc.id){
+  if((queued.length || $('structuredText').value.trim()) && !confirm('切换文档将清空当前未提交的结构化草稿，是否继续？'))return;
+  queued.length=0;$('structuredText').value='';renderDraft();
+ }
  current=doc;$('heading').textContent=doc.title;$('append').disabled=false;$('refresh').disabled=false;
  $('public').checked=doc.public_read;$('adminControls').hidden=false;
  const a=document.createElement('a');a.href=doc.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent='在飞书中打开 ↗';$('link').replaceChildren(a);
@@ -171,10 +175,12 @@ function renderQueued(){
  const root=$('queuedBlocks');root.replaceChildren();
  for(let i=0;i<queued.length;i++){
   const item=queued[i];const div=document.createElement('div');div.className='block-editor';
-  const label=document.createElement('span');label.textContent=(i+1)+'. '+item.kind+'：'+item.text;
+  const label=document.createElement('div');label.className='note';label.textContent='待提交内容 '+(i+1)+' · '+item.kind;
+  const preview=document.createElement('div');preview.className='rich-preview';
+  renderRichBlock(preview,item.kind,item.text,item);
   const remove=document.createElement('button');remove.className='secondary';remove.textContent='移除';
   remove.onclick=()=>{queued.splice(i,1);renderQueued()};
-  div.append(label,remove);root.append(div);
+  div.append(label,preview,remove);root.append(div);
  }
  $('submitBlocks').disabled=!current||queued.length===0;
 }
