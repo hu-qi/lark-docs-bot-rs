@@ -129,3 +129,8 @@ The manual [Feishu API Live Smoke Test](https://github.com/hu-qi/lark-docs-bot-r
 The Web editor and REST `PATCH /api/docs/{id}/blocks/{block_id}` now support single-text-run paragraphs, H1-H3 headings, ordered/unordered list entries and quote blocks. Requests may include `expected_text` alongside `text`; if the block's current content no longer matches, the gateway returns HTTP 409 rather than overwriting unexpectedly. MCP `update_text_block` accepts the same optional `expected_text`. The gateway preserves the existing text-run element attributes when replacing its content. Multi-run text, embeds, and other complex document blocks are intentionally not supported. This is a best-effort read-before-write check, not an atomic Feishu compare-and-swap; concurrent writers may still race between the read and update. Use Feishu's native editor for highly concurrent or complex rich-text changes.
 
 The optional live smoke test's `test_structured` mode also verifies updating a freshly created heading and re-reading it. No existing document is modified by the test.
+
+
+### Long-document block pagination
+
+`GET /api/docs/{id}/blocks` supports optional `page_token` forwarding for Feishu's cursor-based pagination (100 blocks per page). The gateway URL-encodes opaque tokens and rejects malformed control characters. The Web editor now follows up to **10 pages / 1,000 blocks**, avoids repeated cursors, and indicates when a document exceeds that limit. This page limit is deliberately bounded to reduce unexpected Feishu API calls. Existing REST/MCP callers can continue consuming pages explicitly; nested child blocks are not recursively expanded in the browser.
