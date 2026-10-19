@@ -139,3 +139,14 @@ The optional live smoke test's `test_structured` mode also verifies updating a f
 ### Web editor visual preview and quick toolbar
 
 The browser editor now offers a **semantic, read-only rich preview** of supported Feishu text blocks (paragraphs, H1–H3, bullet/numbered lists and blockquotes) alongside the existing raw-text view. Draft content has a live preview and shortcut buttons to choose heading/list/quote types and toggle bold/italic for **new blocks**. Preview text is inserted through DOM `textContent` rather than parsed as HTML, so embedded markup is not executed. Unsupported embedded elements are shown as placeholders, not silently rendered as plain text. Loading a different document invalidates stale refresh responses. Preview is approximate rather than pixel-identical with Feishu, and style fidelity is intentionally limited for mixed-run blocks. CI runs `scripts/web-editor-test.cjs` to check syntax, safe DOM rendering and list grouping.
+
+
+### Multi-run rich text editing (experimental)
+
+`PATCH /api/docs/{id}/blocks/{block_id}/runs` accepts a list of existing text runs, each with `expected_text` and replacement `text`:
+
+```json
+{"runs":[{"expected_text":"Plain ","text":"Updated "},{"expected_text":"bold","text":"strong"}]}
+```
+
+The gateway fetches the current Feishu block, verifies the run count and **every original text value**, then replaces only each run's `content`. Its other attributes (such as bold/italic, links and other text-run properties) remain attached to the same segment. Mixed embeds/mentions/non-text elements and unsupported block types are rejected. A single request can contain at most 100 runs and 20,000 characters of replacement text. MCP provides `update_text_runs` with the same `id`, `block_id`, and `runs` parameters. The Web editor now exposes each run separately and previews individual bold/italic attributes. This does not yet support changing formatting boundaries, text selection across runs or atomic concurrent updates; an external edit can still race between the read and Feishu PATCH. A live multi-run integration smoke should be run before relying on this experimental API with important documents.
