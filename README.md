@@ -106,3 +106,14 @@ This is a **stateless JSON-only HTTP implementation**. It does **not** yet imple
 ### Request limits and mutation audit (single instance)
 
 The Rust HTTP gateway applies configurable per-minute counters **per API-key role (admin, writer, anonymous)** and request class (read vs non-GET). Defaults: `READ_LIMIT_PER_MINUTE=120`, `WRITE_LIMIT_PER_MINUTE=30`. HTTP 429 is returned when exceeded. This is a coarse **in-memory, per-process** limiter, not per-IP throttling, tenant quotas, or a distributed production abuse-prevention system. Put an independently configured IP-based rate limiter/WAF at the HTTPS reverse proxy, especially for public endpoints. Each mutation records its role, request path and response status through tracing; no document bodies, tokens or keys are intentionally recorded. Logs are not a durable audit ledger and must be shipped to a secure log system for retention. Do not use multiple replicas without centralized state and coordination.
+
+
+### Structured block creation (Web, REST, MCP)
+
+The Web editor now has a **structured content queue** for paragraphs, headings (H1-H3), unordered and ordered list items, and quotes. Add blocks to the queue and confirm the document before submitting. The server validates a maximum of 50 blocks per request and 2,000 characters per block; each block may optionally use bold and italic styles. Existing blocks are not overwritten. API: `POST /api/docs/{id}/append-structured` (writer/admin Bearer token) with body:
+
+```json
+{"blocks":[{"kind":"heading2","text":"Roadmap"},{"kind":"bullet","text":"Ship the editor","bold":true}]}
+```
+
+MCP exposes `append_structured` with the same `id` and `blocks` fields. This stage supports creating structured blocks, **not lossless rich-text editing of existing blocks**; images, tables and advanced embedded content remain unsupported. Integration with the live Feishu API should be verified before relying on new block types in production.
