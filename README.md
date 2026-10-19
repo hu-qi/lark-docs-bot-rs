@@ -65,7 +65,7 @@ Feishu App 权限与应用发布状态必须支持 Docx API；只将凭证保存
 
 ## 生产部署
 
-阅读 [deploy/PRODUCTION.md](deploy/PRODUCTION.md)。简要步骤：配置 DNS 和可持久化 Docker Linux 宿主机，将 `deploy/env.production.example` 复制为根目录 `.env.production` 并填写真实秘密；运行 `bash deploy/preflight.sh`；然后 `docker compose --env-file .env.production -f compose.prod.yaml up -d --build`。Caddy 自动申请 HTTPS 证书，应用端口不会公开。定期运行 `bash deploy/backup.sh /absolute/path/to/backups` 并将加密备份异地保存。
+阅读 [deploy/PRODUCTION.md](deploy/PRODUCTION.md)。简要步骤：配置 DNS 和可持久化 Docker Linux 宿主机，将 `deploy/env.production.example` 复制为根目录 `.env.production` 并填写真实秘密；运行 `bash deploy/preflight.sh`；然后通过 GitHub Actions 的 `Deploy to production host` 手动触发部署。工作流使用对应 Commit 的 GHCR 镜像，将应用、Caddy 与备份工具镜像传输至服务器，执行 `docker compose --env-file .env.production -f compose.prod.yaml up -d --no-build`；ECS 无须本地编译 Rust。Caddy 自动申请 HTTPS 证书，应用端口不会公开。定期运行 `bash deploy/backup.sh /absolute/path/to/backups` 并将加密备份异地保存。
 
 生产部署要求：主机防火墙、独立 IP 频率限制或 WAF、监控与报警、离线可恢复备份、集中安全日志和实际 TLS 验收。应用内限流是**单进程、按角色**，不是分布式/按 IP 限流；登记文件也是单实例持久化 JSON，而非多实例数据库。
 
