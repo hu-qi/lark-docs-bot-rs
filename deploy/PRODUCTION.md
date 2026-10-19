@@ -34,3 +34,15 @@ The backup archive contains the gateway's document registry metadata, **not** th
 - Rich-text multi-run API is still experimental pending its dedicated live Feishu test; do not expose this functionality for business-critical documents until validated.
 - The GHCR workflow publishes `linux/amd64` and `linux/arm64` images as build artifacts, but production Compose builds from reviewed source to avoid relying on package visibility or registry pull credentials.
 - Vercel Hobby/serverless is not a direct drop-in host for this persistent long-running Axum application and named-volume registry.
+
+## GitHub Actions SSH password deployment
+
+The manual [Deploy to production host](https://github.com/hu-qi/lark-docs-bot-rs/actions/workflows/deploy.yml) workflow accepts these **GitHub Actions secrets**:
+
+- `DEPLOY_HOST`: SSH hostname/IP (standard SSH port 22)
+- `DEPLOY_USER`: a dedicated SSH account authorized to run Docker and update the application directory
+- `DEPLOY_PASSWORD`: that account's SSH password; stored in GitHub Actions Secrets (never commit it)
+- **Required additional** `DEPLOY_KNOWN_HOSTS`: verified OpenSSH known_hosts entry for that host. From a **trusted server console**, inspect `/etc/ssh/ssh_host_ed25519_key.pub` and confirm its fingerprint; prepare the hostname/IP-prefixed host-key line for the GitHub secret. Do not rely on unverified `ssh-keyscan` as proof of host authenticity.
+- Optional `DEPLOY_PATH`: absolute path of the checked-out repository on the server; if unset, defaults to `~/lark-docs-bot-rs`.
+
+The server must already have Docker Engine, Docker Compose v2, Git, the repository cloned at the target path and a private `.env.production` file with valid application credentials and domain settings. The workflow does **not** upload passwords, install Docker, configure DNS or bootstrap the production environment. It fails closed if host key verification is missing. Password authentication is functional but a deployment-specific SSH key is preferable in the long term; disable password SSH access after migrating clients if your security policy permits it.
