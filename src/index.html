@@ -149,25 +149,38 @@ async function loadParagraphs(docId,seq=refreshSequence) {
 
   if(!field || !block.block_id || !Array.isArray(block[field]?.elements)) continue;
   const elements=block[field].elements;
-  if(elements.length!==1 || typeof elements[0].text_run?.content!=='string') continue;
+  if(elements.length===0 || elements.length>100 || elements.some(e=>typeof e.text_run?.content!=='string'||Object.keys(e).length!==1)) continue;
   const original=elements.map(e=>e.text_run.content).join('');
   const wrap=document.createElement('div');wrap.className='block-editor';
-  const caption=document.createElement('label');caption.textContent=field+' · 内容块 '+(++count);
-  const area=document.createElement('textarea');area.value=original;area.rows=3;area.maxLength=20000;
+  const caption=document.createElement('label');caption.textContent=field+' · 内容块 '+(++count)+(elements.length>1?' · '+elements.length+' 个文本片段':'');
+  const areas=[];
+  const runInputs=document.createElement('div');
+  for(let i=0;i<elements.length;i++){
+   const item=elements[i].text_run;
+   const label=document.createElement('label');
+   const styles=item.text_element_style||{};
+   label.textContent='片段 '+(i+1)+(styles.bold?' · 加粗':'')+(styles.italic?' · 斜体':'');
+   const fieldArea=document.createElement('textarea');fieldArea.value=item.content;fieldArea.rows=2;fieldArea.maxLength=20000;
+   areas.push(fieldArea);runInputs.append(label,fieldArea);
+  }
   const button=document.createElement('button');button.className='secondary';button.textContent='保存该段落';
   button.onclick=async()=>{
    if(!current || current.id!==docId)return status('文档已切换，请刷新');
-   if(area.value===original)return status('内容没有变化');
-   if(!confirm('确认覆盖此文本块的现有内容？'))return;
+   const edits=areas.map((area,i)=>({expected_text:elements[i].text_run.content,text:area.value}));
+   if(edits.every(item=>item.text===item.expected_text))return status('内容没有变化');
+   if(edits.reduce((sum,item)=>sum+Array.from(item.text).length,0)>20000)return status('整个内容块不能超过 20000 字符');
+   if(!confirm('确认修改 '+edits.length+' 个文本片段？原有片段格式会保留。'))return;
    button.disabled=true;
-   try {await api('/api/docs/'+encodeURIComponent(docId)+'/blocks/'+encodeURIComponent(block.block_id),'PATCH',{text:area.value,expected_text:original});
-    await refresh();status('段落修改成功');}catch(e){status((e.message.includes('changed')?'内容已由其他人修改，请刷新后重新编辑。':'保存失败：'+e.message));}
+   try {
+    await api('/api/docs/'+encodeURIComponent(docId)+'/blocks/'+encodeURIComponent(block.block_id)+'/runs','PATCH',{runs:edits});
+    await refresh();status('文本片段修改成功');
+   }catch(e){status((e.message.includes('changed')?'内容已由其他人修改，请刷新后重新编辑。':'保存失败：'+e.message));}
    finally {button.disabled=false;}
   };
-  wrap.append(caption,area,button);root.append(wrap);
+  wrap.append(caption,runInputs,button);root.append(wrap);
  }
  if(more){const note=document.createElement('p');note.className='note';note.textContent='仅显示前 '+pages+' 页内容，超出范围请在飞书中查看。';root.prepend(note)}
- if(count===0)root.textContent='当前没有可编辑的单 Run 文本块。';
+ if(count===0)root.textContent='当前没有可编辑的纯文本 Run 内容块。';
  if(!visual.hasChildNodes())visual.textContent='没有可预览的支持内容。';
 }
 const queued=[];
