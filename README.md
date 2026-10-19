@@ -40,7 +40,7 @@ Feishu App 权限与应用发布状态必须支持 Docx API；只将凭证保存
 | POST | `/api/docs/{id}/access` | 管理员 |
 | POST | `/mcp` | Bearer API Key |
 
-所有受保护请求发送 `Authorization: Bearer <API_KEY>`。`update_text_runs` 按原有 Run 顺序校验 `expected_text`，保留未主动修改的样式和其他属性。请求可按 Run 设置 `bold`/`italic`；不支持编辑嵌入式图片、表格和复杂非文本元素。读取后校验**不是原子的**：极端并发仍需由 Feishu 原生协作机制处理。
+所有受保护请求发送 `Authorization: Bearer <API_KEY>`。`update_text_runs` 按原有 Run 顺序校验 `expected_text`，保留未主动修改的样式和其他属性。请求可按 Run 显式调整 `bold`/`italic`；不支持编辑嵌入式图片、表格和复杂非文本元素。读取后校验**不是原子的**：极端并发仍需由 Feishu 原生协作机制处理。
 
 ### 富文本请求示例
 
@@ -52,7 +52,7 @@ Feishu App 权限与应用发布状态必须支持 Docx API；只将凭证保存
 
 ## MCP 协议
 
-`/mcp` 提供无状态 HTTP JSON-RPC；目前支持 `2025-03-26` 与 `2025-06-18` 协商，POST 请求返回 JSON，通知返回 HTTP 202，GET/DELETE 返回 HTTP 405。服务器不发出 MCP Session ID，也不提供服务器主动推送 SSE、会话恢复或 MRTR。适用于支持**无状态 JSON 响应**的 MCP HTTP 客户端，不宣称支持所有流式扩展。除 `initialize` 外，建议客户端发送所选择的 `MCP-Protocol-Version` 和 `Accept: application/json, text/event-stream`。
+`/mcp` 提供无状态 HTTP JSON-RPC；目前支持 `2025-03-26`、`2025-06-18` 与 `2025-11-25` 协商，POST 请求返回 JSON，通知返回 HTTP 202，GET/DELETE 返回 HTTP 405。服务器不发出 MCP Session ID，也不提供服务器主动推送 SSE、会话恢复或 MRTR。适用于支持**无状态 JSON 响应**的 MCP HTTP 客户端，不宣称支持所有流式扩展。除 `initialize` 外，建议客户端发送所选择的 `MCP-Protocol-Version` 和 `Accept: application/json, text/event-stream`。
 
 完整的工具发现与请求协议可通过 `bash scripts/mcp-smoke.sh` 自动检查，运行前需要 `cargo build --bin lark-docs-bot-rs`。
 
