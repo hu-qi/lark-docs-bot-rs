@@ -78,9 +78,9 @@ jobs:
           fi
           sshpass -e ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no \
             -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
-            "$DEPLOY_USER@$DEPLOY_HOST" sh -s -- "${DEPLOY_PATH:-}" "$COMMIT" "$remote_archive" "$archive_sha" <<'REMOTE_SCRIPT'
+            "$DEPLOY_USER@$DEPLOY_HOST" sh -s -- "${DEPLOY_PATH:-__DEFAULT__}" "$COMMIT" "$remote_archive" "$archive_sha" <<'REMOTE_SCRIPT'
           set -eu
-          if [ -n "$1" ]; then
+          if [ "$1" != "__DEFAULT__" ]; then
             cd "$1"
           else
             cd "$HOME/lark-docs-bot-rs"
