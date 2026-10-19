@@ -165,6 +165,8 @@ async fn verify() -> Result<(), String> {
         let mut edited = elements.clone();
         edited[0]["text_run"]["content"] = json!("Updated ");
         edited[1]["text_run"]["content"] = json!("strong");
+        edited[0]["text_run"]["text_element_style"] = json!({"bold":true});
+        edited[1]["text_run"]["text_element_style"]["italic"] = json!(true);
         call(&client, Method::PATCH,
             &format!("{base}/docx/v1/documents/{id}/blocks/{run_id}"), Some(token),
             Some(json!({"update_text_elements":{"elements":edited}}))).await?;
@@ -175,10 +177,12 @@ async fn verify() -> Result<(), String> {
         if updated.len() != 2
             || updated[0]["text_run"]["content"] != "Updated "
             || updated[1]["text_run"]["content"] != "strong"
-            || updated[1]["text_run"]["text_element_style"]["bold"] != true {
+            || updated[0]["text_run"]["text_element_style"]["bold"] != true
+            || updated[1]["text_run"]["text_element_style"]["bold"] != true
+            || updated[1]["text_run"]["text_element_style"]["italic"] != true {
             return Err("Multi-run formatting or content did not round-trip".into());
         }
-        println!("Multi-run formatting-preserving update verified on disposable document");
+        println!("Multi-run content and explicit bold/italic formatting verified on disposable document");
     }
     println!("Smoke test succeeded. Document and block IDs: {id} / {block_id}");
     Ok(())
