@@ -94,3 +94,10 @@ The gateway queries the same revision, rejects mismatched child IDs and incomple
 ### Optional live deletion verification (manual only)
 
 The **Feishu API Live Smoke Test** workflow now has a `test_delete` input, **off by default**. When explicitly enabled, the smoke binary creates a NEW document, appends/updates its test block, reads that document's revision and child order, then deletes only the block it created and verifies readback. It never accepts existing document IDs from workflow inputs. The test document itself is preserved for inspection. Run this only in a tenant where writing a disposable test document is permitted; this is a destructive integration test of the test block, not a production document cleanup operation.
+
+
+### MCP stateless HTTP security and compatibility
+
+The `/mcp` POST endpoint now requires a **writer/admin Bearer key even for initialize and tools/list**, validates JSON-RPC 2.0 request IDs and methods, rejects cross-origin browser requests, and marks JSON responses `Cache-Control: no-store`. It returns `MCP-Protocol-Version: 2025-03-26` and HTTP 202 for accepted notifications. Existing write and document allowlist authorization continues to apply to individual tools.
+
+This is a **stateless JSON-only HTTP implementation**. It does **not** yet implement resumable SSE, session management, batch JSON-RPC, or all MCP transport negotiation behaviors. Clients must support a JSON-only, stateless HTTP MCP endpoint; some MCP clients may require additional protocol support. Configure your HTTPS reverse proxy to preserve `Host` and reject unexpected origins; do not expose plain HTTP remotely.
