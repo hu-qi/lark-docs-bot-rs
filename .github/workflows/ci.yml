@@ -19,6 +19,7 @@ jobs:
       - run: cargo build --release
       - run: cargo build --bin lark-docs-bot-rs
       - run: bash scripts/mcp-smoke.sh
+      - run: node scripts/web-editor-test.cjs
   docker:
     runs-on: ubuntu-latest
     steps:
