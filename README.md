@@ -117,3 +117,8 @@ The Web editor now has a **structured content queue** for paragraphs, headings (
 ```
 
 MCP exposes `append_structured` with the same `id` and `blocks` fields. This stage supports creating structured blocks, **not lossless rich-text editing of existing blocks**; images, tables and advanced embedded content remain unsupported. Integration with the live Feishu API should be verified before relying on new block types in production.
+
+
+### Optional real structured-content verification
+
+The manual [Feishu API Live Smoke Test](https://github.com/hu-qi/lark-docs-bot-rs/actions/workflows/feishu-smoke.yml) has a `test_structured` checkbox (off by default). When enabled it creates a disposable document, inserts heading, unordered-list, ordered-list and quote blocks, and confirms their text can be read back. It does not touch existing documents. The Rust CI validates serialization and HTTP protocol behavior, but does not replace this live Feishu round-trip.
