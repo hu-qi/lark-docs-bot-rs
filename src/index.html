@@ -69,8 +69,24 @@ async function refresh() {
 }
 async function loadParagraphs(docId) {
  const root=$('paragraphs'); root.replaceChildren();
- const response=await api('/api/docs/'+encodeURIComponent(docId)+'/blocks');
- const items=Array.isArray(response.items)?response.items:[];
+ const items=[];
+ let cursor='', more=true, pages=0;
+ const seen=new Set();
+ while(more && pages<10){
+  if(!current || current.id!==docId)return;
+  const path='/api/docs/'+encodeURIComponent(docId)+'/blocks'+(cursor?'?page_token='+encodeURIComponent(cursor):'');
+  const response=await api(path);
+  if(Array.isArray(response.items))items.push(...response.items);
+  pages++;
+  more=response.has_more===true;
+  if(more){
+   if(typeof response.page_token!=='string'||!response.page_token||seen.has(response.page_token)){
+    root.textContent='分页数据异常，请在飞书中查看。';return;
+   }
+   seen.add(response.page_token);cursor=response.page_token;
+  }
+ }
+ if(!current||current.id!==docId)return;
  let count=0;
  for(const block of items){
   const fields={2:'text',3:'heading1',4:'heading2',5:'heading3',12:'bullet',13:'ordered',15:'quote'};
@@ -89,12 +105,13 @@ async function loadParagraphs(docId) {
    if(!confirm('确认覆盖此文本块的现有内容？'))return;
    button.disabled=true;
    try {await api('/api/docs/'+encodeURIComponent(docId)+'/blocks/'+encodeURIComponent(block.block_id),'PATCH',{text:area.value,expected_text:original});
-    await refresh();status('段落修改成功');}catch(e){status('保存失败：'+e.message);}
+    await refresh();status('段落修改成功');}catch(e){status((e.message.includes('changed')?'内容已由其他人修改，请刷新后重新编辑。':'保存失败：'+e.message));}
    finally {button.disabled=false;}
   };
   wrap.append(caption,area,button);root.append(wrap);
  }
- if(count===0)root.textContent='当前没有可编辑的普通文本段落。';
+ if(more){const note=document.createElement('p');note.className='note';note.textContent='仅显示前 '+pages+' 页内容，超出范围请在飞书中查看。';root.prepend(note)}
+ if(count===0)root.textContent='当前没有可编辑的单 Run 文本块。';
 }
 const queued=[];
 function renderQueued(){
