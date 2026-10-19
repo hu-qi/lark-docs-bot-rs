@@ -25,6 +25,11 @@ jobs:
           cp deploy/env.production.example .env.production
           docker compose -f compose.prod.yaml --env-file .env.production config --quiet
           rm -f .env.production
+      - name: Validate Caddy HTTPS configuration
+        run: |
+          docker run --rm -e SITE_DOMAIN=docs.example.com -e ACME_EMAIL=admin@example.com \
+            -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
   docker:
     runs-on: ubuntu-latest
     steps:
