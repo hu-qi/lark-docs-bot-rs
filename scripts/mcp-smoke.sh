@@ -5,6 +5,7 @@ export LARK_APP_SECRET=test_only
 export ADMIN_API_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 export WRITE_API_KEY=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 export BIND_ADDR=127.0.0.1:39387
+export WRITE_LIMIT_PER_MINUTE=5
 export DATA_FILE="$(mktemp -d)/registry.json"
 target/debug/lark-docs-bot-rs >/dev/null 2>&1 &
 server=$!
@@ -28,4 +29,6 @@ status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $WRIT
 test "$status" = 400
 status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $WRITE_API_KEY" -H 'Origin: https://attacker.example' -H 'Content-Type: application/json' -d "$payload" "$base")
 test "$status" = 403
-echo 'Stateless MCP HTTP protocol checks passed'
+status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $WRITE_API_KEY" -H 'Content-Type: application/json' -d "$payload" "$base")
+test "$status" = 429
+echo 'Stateless MCP HTTP protocol, authorization and rate limit checks passed'
