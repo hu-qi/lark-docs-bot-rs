@@ -20,6 +20,11 @@ jobs:
       - run: cargo build --bin lark-docs-bot-rs
       - run: bash scripts/mcp-smoke.sh
       - run: node scripts/web-editor-test.cjs
+      - name: Validate production Compose topology
+        run: |
+          cp deploy/env.production.example .env.production
+          docker compose -f compose.prod.yaml --env-file .env.production config --quiet
+          rm -f .env.production
   docker:
     runs-on: ubuntu-latest
     steps:
