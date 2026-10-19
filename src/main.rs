@@ -21,6 +21,7 @@ struct AppState {
     http: reqwest::Client,
     config: Arc<Config>,
     registry: Arc<Mutex<BTreeMap<String, DocEntry>>>,
+    persist_lock: Arc<Mutex<()>>,
     token: Arc<Mutex<Option<Token>>>,
     rate_limits: Arc<Mutex<BTreeMap<String, RateBucket>>>,
 }
@@ -118,6 +119,9 @@ fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 async fn saved(state: &AppState) -> ApiResult<()> {
+    // Serialize file snapshots and renames; otherwise concurrent requests can
+    // write the same temporary path and corrupt or lose registry changes.
+    let _write_guard = state.persist_lock.lock().await;
     let contents = serde_json::to_vec_pretty(&*state.registry.lock().await)
         .map_err(|_| problem(StatusCode::INTERNAL_SERVER_ERROR, "Serialize registry"))?;
     let path = &state.config.data_file;
@@ -631,6 +635,7 @@ async fn main() {
         http: reqwest::Client::builder().timeout(std::time::Duration::from_secs(20)).build().unwrap(),
         config: Arc::new(config),
         registry: Arc::new(Mutex::new(registry)),
+        persist_lock: Arc::new(Mutex::new(())),
         token: Arc::new(Mutex::new(None)),
         rate_limits: Arc::new(Mutex::new(BTreeMap::new())),
     };
