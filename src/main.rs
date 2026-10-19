@@ -441,14 +441,15 @@ async fn set_access(State(s): State<AppState>, headers: HeaderMap, Path(id): Pat
     saved(&s).await?;
     Ok(Json(result))
 }
-const MCP_CURRENT_VERSION: &str = "2025-06-18";
+const MCP_CURRENT_VERSION: &str = "2025-11-25";
+const MCP_PREVIOUS_VERSION: &str = "2025-06-18";
 const MCP_LEGACY_VERSION: &str = "2025-03-26";
-fn supported_mcp_version(v: &str) -> bool { v == MCP_CURRENT_VERSION || v == MCP_LEGACY_VERSION }
+fn supported_mcp_version(v: &str) -> bool { v == MCP_CURRENT_VERSION || v == MCP_PREVIOUS_VERSION || v == MCP_LEGACY_VERSION }
 fn validate_mcp_transport(headers: &HeaderMap, method: &str, requested_version: Option<&str>) -> ApiResult<&'static str> {
     if let Some(v) = headers.get("mcp-protocol-version") {
         let v = v.to_str().map_err(|_| problem(StatusCode::BAD_REQUEST, "Invalid MCP-Protocol-Version header"))?;
         if !supported_mcp_version(v) {
-            return Err(problem(StatusCode::BAD_REQUEST, format!("Unsupported MCP protocol version; supported: {MCP_LEGACY_VERSION}, {MCP_CURRENT_VERSION}")));
+            return Err(problem(StatusCode::BAD_REQUEST, format!("Unsupported MCP protocol version; supported: {MCP_LEGACY_VERSION}, {MCP_PREVIOUS_VERSION}, {MCP_CURRENT_VERSION}")));
         }
         if method == "initialize" && requested_version.is_some_and(|requested| requested != v) {
             return Err(problem(StatusCode::BAD_REQUEST, "MCP initialize version must match protocol version header"));
@@ -456,10 +457,11 @@ fn validate_mcp_transport(headers: &HeaderMap, method: &str, requested_version: 
     }
     if method != "initialize" {
         let v = headers.get("mcp-protocol-version").and_then(|v|v.to_str().ok()).unwrap_or(MCP_LEGACY_VERSION);
-        return Ok(if v == MCP_CURRENT_VERSION {MCP_CURRENT_VERSION} else {MCP_LEGACY_VERSION});
+        return Ok(if v == MCP_CURRENT_VERSION {MCP_CURRENT_VERSION} else if v == MCP_PREVIOUS_VERSION {MCP_PREVIOUS_VERSION} else {MCP_LEGACY_VERSION});
     }
     let version = requested_version.unwrap_or(MCP_LEGACY_VERSION);
     if version == MCP_CURRENT_VERSION { Ok(MCP_CURRENT_VERSION) }
+    else if version == MCP_PREVIOUS_VERSION { Ok(MCP_PREVIOUS_VERSION) }
     else { Ok(MCP_LEGACY_VERSION) }
 }
 fn mcp_error(id: Value, code: i64, message: &str) -> Value {
@@ -737,6 +739,7 @@ mod tests {
         let mut modern = HeaderMap::new();
         modern.insert("mcp-protocol-version", MCP_CURRENT_VERSION.parse().unwrap());
         assert_eq!(validate_mcp_transport(&modern, "ping", None).unwrap(), MCP_CURRENT_VERSION);
+        assert_eq!(validate_mcp_transport(&h, "initialize", Some(MCP_PREVIOUS_VERSION)).unwrap(), MCP_PREVIOUS_VERSION);
     }
     #[test] fn jsonrpc_request_validation() {
         assert!(mcp_request_validation(&json!({"jsonrpc":"2.0","id":1,"method":"initialize"})).is_ok());
