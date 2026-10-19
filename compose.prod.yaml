@@ -1,7 +1,8 @@
 # Persistent single-node HTTPS deployment. Never commit .env.production.
 services:
   lark-docs:
-    build: .
+    # Prebuilt in GitHub Actions, pinned by the deploy workflow (no Rust compilation on ECS).
+    image: ${APP_IMAGE:-ghcr.io/hu-qi/lark-docs-bot-rs:main}
     restart: unless-stopped
     env_file: .env.production
     expose:
